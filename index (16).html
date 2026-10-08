@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Travel Accommodation Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    :root {
+      --primary-color: #1e5374;
+      --secondary-color: #e86323;
+      --accent-color: #f3c468;
+      --card-bg: #ffffff;
+    }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top, #ffffff 0, #f3f6fb 45%, #e5edf7 100%);
+      min-height: 100vh; color: #1e293b;
+    }
+
+    /* Header */
+    .header-logo-container { padding: 1.25rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; background: #fff; }
+    .header-title { color: var(--primary-color); font-weight: 800; font-size: 1.8rem; margin: 0; }
+    .brand-logo-circle { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-color); box-shadow: 0 2px 4px rgba(0,0,0,0.1); background: #fff; }
+    .user-badge { font-size: 0.85rem; font-weight: 600; color: #64748b; background: #f8fafc; padding: 0.45rem 1rem; border-radius: 999px; border: 1px solid #e2e8f0; }
+
+    /* Cards */
+    .card-container { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px rgba(0,0,0,0.05); padding: 1.5rem; margin-bottom: 1.5rem; }
+    .section-title { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1rem; color: #1e293b; margin-bottom: 1rem; padding-bottom: .6rem; border-bottom: 2px solid #e2e8f0; }
+    .section-title i { color: var(--secondary-color); }
+
+    /* Form controls */
+    .form-label { font-weight: 600; font-size: .85rem; color: #64748b; }
+    .form-control, .form-select { border-radius: 8px; border: 1px solid #cbd5e1; font-size: .92rem; }
+    .form-control:focus, .form-select:focus { border-color: var(--primary-color); box-shadow: 0 0 0 .2rem rgba(30,83,116,.15); }
+    .form-control[readonly] { background: #f8fafc; }
+    .input-icon { position: relative; }
+    .input-icon i.lead-icon { position: absolute; top: 12px; left: 14px; color: #64748b; font-size: .9rem; }
+    .input-icon .form-control, .input-icon .form-select { padding-left: 38px; }
+
+    /* Buttons */
+    .btn-primary { background: linear-gradient(to right, #1e5374, #2873a1); border: none; color: white !important; font-weight: 600; }
+    .btn-primary:hover { background: linear-gradient(to right, #17435f, #1f6290); }
+    .btn-info { background: linear-gradient(to right, #e86323, #f3c468); border: none; color: white !important; font-weight: 600; }
+    .btn-dark { background: linear-gradient(to right, #334155, #0f172a); border: none; color: white !important; font-weight: 600; }
+    .btn-outline-secondary { border: 1px solid #cbd5e1; color: #475569; font-weight: 600; }
+
+    /* Badges (same palette as the tracker) */
+    .status-badge { padding: .3rem .75rem; border-radius: 999px; font-weight: 700; font-size: .75rem; display: inline-block; }
+    .status-active { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .status-renewal { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .status-pending { background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; }
+    .status-warning { background: #fef9c3; color: #b45309; border: 1px solid #fde047; }
+    .status-neutral { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+    .fit-badge { padding: .28rem .65rem; border-radius: 6px; font-weight: 600; font-size: .8rem; display: inline-block; }
+    .fit-success { background: #ecfdf5; color: #0d9488; border: 1px solid #ccfbf1; }
+    .fit-neutral { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+
+    /* Manager approver box */
+    .manager-box { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid var(--secondary-color); border-radius: 8px; padding: .75rem 1rem; font-size: .88rem; }
+
+    /* Workflow steps */
+    .step { display: flex; align-items: center; gap: .85rem; }
+    .step-icon { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 1rem; background: linear-gradient(to right, #1e5374, #2873a1); box-shadow: 0 2px 4px rgba(0,0,0,.12); }
+    .step:nth-child(2) .step-icon { background: linear-gradient(to right, #e86323, #f3c468); }
+    .step-title { font-weight: 700; font-size: .92rem; color: #1e293b; }
+    .step-sub { font-size: .8rem; color: #64748b; }
+
+    /* Summary list (success view) */
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid #f1f5f9; font-size: .9rem; }
+    .summary-row span:first-child { color: #64748b; font-weight: 600; }
+    .summary-row span:last-child { font-weight: 600; text-align: right; }
+
+    #loader { position: fixed; inset: 0; background: rgba(255,255,255,0.85); display: none; justify-content: center; align-items: center; z-index: 9999; }
+    .table-like-note { font-size: .78rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="text-center">
+      <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+      <div class="mt-3 fw-semibold text-muted small">Submitting and emailing your manager...</div>
+    </div>
+  </div>
+
+  <div class="header-logo-container mb-4">
+    <div class="d-flex align-items-center gap-3">
+      {% if logo_url %}<img src="{{ logo_url }}" alt="Brand Logo" class="brand-logo-circle" onerror="this.style.display='none'">{% endif %}
+      <h1 class="header-title">Travel Accommodation Portal</h1>
+    </div>
+    <div class="user-badge"><i class="fas fa-plane-departure me-1"></i> Ticketing for Travel</div>
+  </div>
+
+  <div class="container-fluid px-4" style="max-width: 1100px;">
+
+    <div id="alertBox"></div>
+
+    <!-- Workflow strip -->
+    <div class="card-container">
+      <div class="row g-3">
+        <div class="col-md-4 step">
+          <div class="step-icon"><i class="fas fa-pen-to-square"></i></div>
+          <div><div class="step-title">1. Submit request</div><div class="step-sub">Fill in your travel details</div></div>
+        </div>
+        <div class="col-md-4 step">
+          <div class="step-icon"><i class="fas fa-envelope-circle-check"></i></div>
+          <div><div class="step-title">2. Manager approval</div><div class="step-sub">Approve / Reject directly in Outlook</div></div>
+        </div>
+        <div class="col-md-4 step">
+          <div class="step-icon"><i class="fas fa-ticket"></i></div>
+          <div><div class="step-title">3. Travel Desk books</div><div class="step-sub">Tickets and stay arranged, you get a confirmation</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form -->
+    <div id="formView">
+      <form id="travelForm" novalidate>
+
+        <div class="card-container">
+          <div class="section-title"><i class="fas fa-id-badge"></i> Employee Details</div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label for="emp_code" class="form-label">Emp Code <span class="text-danger">*</span></label>
+              <div class="input-icon has-validation">
+                <i class="fas fa-hashtag lead-icon"></i>
+                <input type="text" class="form-control" id="emp_code" name="emp_code" maxlength="30" autocomplete="off" placeholder="e.g. H37" required>
+                <div class="invalid-feedback" id="empFeedback">Enter a valid employee code.</div>
+              </div>
+              <div class="table-like-note mt-1" id="lookupNote"></div>
+            </div>
+            <div class="col-md-8">
+              <label for="emp_name" class="form-label">Name of Person travelling <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-user lead-icon"></i>
+                <input type="text" class="form-control" id="emp_name" name="emp_name" maxlength="150" placeholder="Full name" required>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label for="designation" class="form-label">Designation <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-briefcase lead-icon"></i>
+                <input type="text" class="form-control" id="designation" name="designation" maxlength="150" required>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label for="department" class="form-label">Department <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-building lead-icon"></i>
+                <input type="text" class="form-control" id="department" name="department" maxlength="150" required>
+              </div>
+            </div>
+            <div class="col-12 d-none" id="managerBox">
+              <div class="manager-box">
+                <i class="fas fa-user-check me-2 text-muted"></i>
+                <span class="text-muted">Approval will be requested from manager code</span>
+                <strong id="managerName"></strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-container">
+          <div class="section-title"><i class="fas fa-route"></i> Trip Details</div>
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label for="from_date" class="form-label">From (Date) <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="from_date" name="from_date" min="{{ today }}" required>
+            </div>
+            <div class="col-md-3">
+              <label for="to_date" class="form-label">To (Date) <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="to_date" name="to_date" min="{{ today }}" required>
+              <div class="invalid-feedback">Must be on or after the From date.</div>
+            </div>
+            <div class="col-md-3">
+              <label for="place_from" class="form-label">Place (From) <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-location-dot lead-icon"></i>
+                <input type="text" class="form-control" id="place_from" name="place_from" maxlength="150" required>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <label for="place_to" class="form-label">Place (To) <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-flag-checkered lead-icon"></i>
+                <input type="text" class="form-control" id="place_to" name="place_to" maxlength="150" required>
+              </div>
+            </div>
+            <div class="col-12">
+              <label for="travel_reason" class="form-label">Reason of Travel <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-comment-dots lead-icon"></i>
+                <textarea class="form-control" id="travel_reason" name="travel_reason" rows="3" maxlength="500" required
+                  placeholder="Purpose of the trip (e.g. outlet launch, training, audit)"></textarea>
+              </div>
+              <div class="table-like-note text-end mt-1"><span id="reasonCount">0</span>/500</div>
+            </div>
+            <div class="col-12">
+              <span class="fit-badge fit-neutral" id="durationBadge"><i class="far fa-calendar me-1"></i> Select dates to see duration</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-container">
+          <div class="section-title"><i class="fas fa-bed"></i> Accommodation</div>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label for="room_category" class="form-label">Category of Room <span class="text-danger">*</span></label>
+              <div class="input-icon">
+                <i class="fas fa-door-open lead-icon"></i>
+                <select class="form-select" id="room_category" name="room_category" required>
+                  <option value="" selected disabled>Select...</option>
+                  <option>Single Occupancy</option>
+                  <option>Double Occupancy</option>
+                </select>
+              </div>
+            </div>
+            <div class="col-md-7">
+              <label for="preferred_location" class="form-label">Preferred Location (Near to Outlet)</label>
+              <div class="input-icon">
+                <i class="fas fa-store lead-icon"></i>
+                <input type="text" class="form-control" id="preferred_location" name="preferred_location" maxlength="150" placeholder="Outlet name or area">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2 mb-5">
+          <button type="button" class="btn btn-outline-secondary px-4" id="resetBtn"><i class="fas fa-rotate-left me-1"></i> Reset</button>
+          <button type="submit" class="btn btn-primary px-4" id="submitBtn"><i class="fas fa-paper-plane me-1"></i> Submit for Approval</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Success view -->
+    <div id="successView" class="d-none">
+      <div class="card-container">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+          <div>
+            <h4 class="fw-bold mb-1" style="color: var(--primary-color);"><i class="fas fa-circle-check me-2" style="color:#16a34a;"></i>Request submitted</h4>
+            <div class="text-muted small" id="successMsg"></div>
+          </div>
+          <span class="status-badge status-pending"><i class="fas fa-hourglass-half me-1"></i> Pending Manager Approval</span>
+        </div>
+        <div id="summaryList"></div>
+        <div class="table-like-note mt-3">Reference: <span id="refId"></span></div>
+        <div class="d-flex justify-content-end mt-3">
+          <button class="btn btn-info px-4" id="newRequestBtn"><i class="fas fa-plus me-1"></i> New Request</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const form = document.getElementById('travelForm');
+    const empInput = document.getElementById('emp_code');
+    const nameInput = document.getElementById('emp_name');
+    const fromDate = document.getElementById('from_date');
+    const toDate = document.getElementById('to_date');
+    const alertBox = document.getElementById('alertBox');
+    const loader = document.getElementById('loader');
+    let empValid = false, nameAuto = false, debounce;
+
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function showAlert(type, msg) {
+      alertBox.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
+        <i class="fas ${type === 'danger' ? 'fa-triangle-exclamation' : 'fa-circle-check'} me-2"></i>${esc(msg)}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearEmployee() {
+      empValid = false;
+      if (nameAuto) nameInput.value = '';
+      nameAuto = false;
+      document.getElementById('managerBox').classList.add('d-none');
+      document.getElementById('lookupNote').textContent = '';
+    }
+
+    async function lookupEmployee() {
+      const code = empInput.value.trim();
+      const note = document.getElementById('lookupNote');
+      if (!code) { clearEmployee(); empInput.classList.remove('is-valid', 'is-invalid'); return; }
+      note.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Checking...';
+      try {
+        const res = await fetch('/api/employee/' + encodeURIComponent(code));
+        const data = await res.json();
+        if (res.ok && data.found) {
+          empValid = true;
+          if (data.empName && (!nameInput.value || nameAuto)) { nameInput.value = data.empName; nameAuto = true; }
+          document.getElementById('managerName').textContent = (data.managerName || data.managerCode || '-');
+          document.getElementById('managerBox').classList.remove('d-none');
+          empInput.classList.remove('is-invalid'); empInput.classList.add('is-valid');
+          note.innerHTML = '<span class="text-success"><i class="fas fa-check me-1"></i>Employee verified</span>';
+        } else {
+          clearEmployee();
+          document.getElementById('empFeedback').textContent =
+            res.status === 404 ? 'Employee code not found.' : (data.error || 'Lookup failed.');
+          empInput.classList.remove('is-valid'); empInput.classList.add('is-invalid');
+        }
+      } catch (e) {
+        clearEmployee();
+        document.getElementById('empFeedback').textContent = 'Could not reach the server.';
+        empInput.classList.add('is-invalid');
+      }
+    }
+
+    function updateDuration() {
+      const badge = document.getElementById('durationBadge');
+      if (fromDate.value && toDate.value && toDate.value >= fromDate.value) {
+        const nights = Math.round((new Date(toDate.value) - new Date(fromDate.value)) / 86400000);
+        badge.className = 'fit-badge fit-success';
+        badge.innerHTML = `<i class="far fa-calendar-check me-1"></i> ${nights} night${nights === 1 ? '' : 's'} (${nights + 1} day${nights === 0 ? '' : 's'})`;
+      } else {
+        badge.className = 'fit-badge fit-neutral';
+        badge.innerHTML = '<i class="far fa-calendar me-1"></i> Select dates to see duration';
+      }
+    }
+
+    empInput.addEventListener('input', () => { clearEmployee(); clearTimeout(debounce); debounce = setTimeout(lookupEmployee, 500); });
+    empInput.addEventListener('blur', lookupEmployee);
+    nameInput.addEventListener('input', () => { nameAuto = false; });
+    fromDate.addEventListener('change', () => {
+      toDate.min = fromDate.value || toDate.min;
+      if (toDate.value && toDate.value < fromDate.value) toDate.value = '';
+      updateDuration();
+    });
+    toDate.addEventListener('change', updateDuration);
+
+    const reasonInput = document.getElementById('travel_reason');
+    reasonInput.addEventListener('input', () => { document.getElementById('reasonCount').textContent = reasonInput.value.length; });
+
+    function resetForm() {
+      form.reset(); form.classList.remove('was-validated');
+      document.getElementById('reasonCount').textContent = '0';
+      empInput.classList.remove('is-valid', 'is-invalid');
+      clearEmployee(); updateDuration();
+    }
+    document.getElementById('resetBtn').addEventListener('click', resetForm);
+
+    function fmt(d) { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      form.classList.add('was-validated');
+      if (!form.checkValidity() || !empValid) {
+        if (!empValid) empInput.classList.add('is-invalid');
+        return;
+      }
+      alertBox.innerHTML = '';
+      const fd = new FormData(form);
+      loader.style.display = 'flex';
+      try {
+        const res = await fetch('/submit-travel', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          const rows = [
+            ['Emp Code', fd.get('emp_code')], ['Name', fd.get('emp_name')],
+            ['Designation', fd.get('designation')], ['Department', fd.get('department')],
+            ['From (Date)', fmt(fd.get('from_date'))], ['To (Date)', fmt(fd.get('to_date'))],
+            ['Place (From)', fd.get('place_from')], ['Place (To)', fd.get('place_to')],
+            ['Reason of Travel', fd.get('travel_reason')],
+            ['Category of Room', fd.get('room_category')], ['Preferred Location', fd.get('preferred_location') || '-'],
+          ];
+          document.getElementById('summaryList').innerHTML =
+            rows.map(r => `<div class="summary-row"><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join('');
+          document.getElementById('successMsg').textContent = data.message;
+          document.getElementById('refId').textContent = data.requestId;
+          document.getElementById('formView').classList.add('d-none');
+          document.getElementById('successView').classList.remove('d-none');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          showAlert('danger', data.error || 'Something went wrong.');
+        }
+      } catch (err) {
+        showAlert('danger', 'Network error. Please try again.');
+      } finally {
+        loader.style.display = 'none';
+      }
+    });
+
+    document.getElementById('newRequestBtn').addEventListener('click', () => {
+      resetForm();
+      document.getElementById('successView').classList.add('d-none');
+      document.getElementById('formView').classList.remove('d-none');
+    });
+  </script>
+</body>
+</html>

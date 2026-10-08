@@ -1,0 +1,7 @@
+flask>=3.0,<4
+pyodbc>=5.1
+msal>=1.28
+requests>=2.32
+python-dotenv>=1.0
+PyJWT[crypto]>=2.8
+gunicorn>=22.0
