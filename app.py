@@ -396,7 +396,7 @@ def validate_action_token():
 import secrets  # noqa: E402
 from flask import Response  # noqa: E402
 
-_OPEN_PATHS = ("/api/approve", "/healthz")  # webhook has its own token check; health is for Railway
+_OPEN_PATHS = ("/api/approve", "/healthz")  # webhook has its own token check; health is for monitoring
 
 
 @app.before_request
@@ -600,4 +600,7 @@ def api_approve():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)), debug=True)  # local only; Railway uses gunicorn
+    from waitress import serve
+    # Loopback only: the Cloudflare Tunnel (cloudflared) on this server is the sole entry point
+    print("Serving Travel Accommodation Portal on http://127.0.0.1:8080 ...")
+    serve(app, host="127.0.0.1", port=8080)
