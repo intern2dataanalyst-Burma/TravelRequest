@@ -7,45 +7,50 @@
   <title>Travel Request Approval | Hunger Pangs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   {% include "_brand.html" %}
   <style>
     .page { max-width: 760px; }
-    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .6rem 0; border-bottom: 1px solid var(--hp-line); font-size: .92rem; }
+    .card-title { font-size: 1.08rem; font-weight: 700; margin: 0 0 1rem; }
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--hp-line); font-size: .92rem; }
     .summary-row:last-child { border-bottom: 0; }
-    .summary-row span:first-child { color: var(--hp-muted); font-weight: 600; white-space: nowrap; }
-    .summary-row span:last-child { font-weight: 600; text-align: right; }
-    .decision-option { border: 2px solid var(--hp-line); border-radius: 14px; padding: .9rem 1rem; cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: .6rem; background: #fff; }
-    .decision-option:hover { border-color: #d8cba5; }
-    .btn-check:checked + .decision-option.approve { border-color: var(--hp-olive); background: #f2f5e3; color: #56611a; }
-    .btn-check:checked + .decision-option.reject { border-color: var(--hp-terracotta); background: #fdf0ed; color: #9b3523; }
-    .btn-check:focus-visible + .decision-option { box-shadow: 0 0 0 .2rem rgba(197,75,54,.25); }
-    .result { display: flex; gap: .9rem; align-items: flex-start; border-radius: 14px; padding: 1rem 1.15rem; margin-bottom: 1.25rem; font-size: .95rem; }
-    .result i { font-size: 1.25rem; margin-top: .1rem; }
-    .result.ok { background: #f2f5e3; color: #3f4813; border: 1px solid #d9e0b0; }
-    .result.bad { background: #fdf0ed; color: #7c2a1c; border: 1px solid #f0c4b9; }
-    .result.info { background: #fbf1cc; color: #5e520b; border: 1px solid #ecdc95; }
+    .summary-row span:first-child { color: var(--hp-muted); white-space: nowrap; }
+    .summary-row span:last-child { font-weight: 600; color: var(--hp-ink); text-align: right; }
+    .decision-option { border: 1px solid var(--hp-line-strong); border-radius: 12px; padding: .9rem 1rem; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: .6rem; background: #fff; color: var(--hp-ink); transition: border-color .15s, background .15s; }
+    .decision-option:hover { border-color: #c9bda1; }
+    .decision-option i { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: .8rem; background: var(--hp-tint); color: var(--hp-muted); }
+    .btn-check:checked + .decision-option.approve { border-color: var(--hp-olive); background: #f6f8ec; box-shadow: 0 0 0 1px var(--hp-olive); }
+    .btn-check:checked + .decision-option.approve i { background: var(--hp-olive); color: #fff; }
+    .btn-check:checked + .decision-option.reject { border-color: var(--hp-terracotta); background: #fdf3f0; box-shadow: 0 0 0 1px var(--hp-terracotta); }
+    .btn-check:checked + .decision-option.reject i { background: var(--hp-terracotta); color: #fff; }
+    .btn-check:focus-visible + .decision-option { box-shadow: 0 0 0 3px rgba(197,75,54,.2); }
   </style>
 </head>
 <body>
-  {% set page_title = 'Travel Request Approval' %}
+  {% set app_name = 'Travel Request Approval' %}
   {% include "_header.html" %}
 
   <main class="page">
 
   {% if state == 'invalid' %}
-    <section class="hp-card text-center py-5">
+    <div class="hp-card hp-card-pad text-center py-5">
       <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
-      <h2 class="display-title">This approval link is invalid or has expired</h2>
+      <h1 class="h4 fw-bold">This approval link is invalid or has expired</h1>
       <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new travel request.</p>
-    </section>
+    </div>
 
   {% else %}
+    <div class="page-head">
+      <div class="eyebrow mb-2">Travel request &middot; {{ r.EmpCode }}</div>
+      <h1>{{ r.EmpName }}</h1>
+      <p>{{ r.Designation }}{% if r.Department %} &middot; {{ r.Department }}{% endif %}</p>
+    </div>
+
     {% if state == 'done' or state == 'already' %}
       {% set ok = r.Status == 'Approved' %}
-      <div class="result {{ 'info' if state == 'already' else 'ok' if ok else 'bad' }}">
+      <div class="notice {{ 'notice-info' if state == 'already' else 'notice-ok' if ok else 'notice-bad' }} mb-3">
         <i class="fas {{ 'fa-circle-info' if state == 'already' else 'fa-circle-check' if ok else 'fa-circle-xmark' }}"></i>
         <div>
           {% if state == 'done' %}
@@ -58,13 +63,11 @@
       </div>
     {% endif %}
 
-    <section class="hp-card">
-      <div class="eyebrow mb-1">Travel request</div>
-      <h2 class="display-title mb-3">{{ r.EmpName }} <span style="color: var(--hp-muted); font-weight: 600; font-size: 1.05rem">({{ r.EmpCode }})</span></h2>
+    <div class="hp-card hp-card-pad mb-3">
+      <h2 class="card-title">Trip details</h2>
       {% for label, value in [
-          ('Designation', r.Designation), ('Department', r.Department),
-          ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
           ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
+          ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
           ('Preferred Location', r.PreferredLocation or '-')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
@@ -72,12 +75,12 @@
       {% if r.Status != 'Pending' and r.ActionComment %}
         <div class="summary-row"><span>{{ 'Reason for rejection' if r.Status == 'Rejected' else 'Manager comment' }}</span><span>{{ r.ActionComment }}</span></div>
       {% endif %}
-    </section>
+    </div>
 
     {% if state == 'pending' %}
-    <form method="post" class="hp-card" id="decisionForm">
-      <h2 class="section-title"><i class="fas fa-gavel"></i> Your decision</h2>
-      {% if error %}<div class="result bad py-2"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
+    <form method="post" class="hp-card hp-card-pad" id="decisionForm">
+      <h2 class="card-title">Your decision</h2>
+      {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
       <input type="hidden" name="t" value="{{ token }}">
       <div class="row g-2 mb-3">
         <div class="col-6">
@@ -90,10 +93,10 @@
         </div>
       </div>
       <label for="comment" class="form-label" id="commentLabel">Comment (optional)</label>
-      <textarea class="form-control mb-3" id="comment" name="comment" rows="3" maxlength="300"
+      <textarea class="form-control" id="comment" name="comment" rows="3" maxlength="300"
         placeholder="Shown to the employee">{{ comment }}</textarea>
-      <div class="d-flex justify-content-end">
-        <button type="submit" class="btn btn-hp"><i class="fas fa-paper-plane me-1"></i> Submit decision</button>
+      <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
+        <button type="submit" class="btn btn-hp">Submit decision <i class="fas fa-arrow-right ms-1"></i></button>
       </div>
     </form>
     <script>
@@ -102,7 +105,7 @@
       function sync() {
         const reject = document.getElementById('dReject').checked;
         comment.required = reject;
-        label.innerHTML = reject ? 'Reason for rejection <span class="req">*</span>' : 'Comment (optional)';
+        label.innerHTML = reject ? 'Reason for rejection<span class="req">*</span>' : 'Comment (optional)';
       }
       document.querySelectorAll('input[name=decision]').forEach(el => el.addEventListener('change', sync));
       sync();
@@ -110,5 +113,7 @@
     {% endif %}
   {% endif %}
   </main>
+
+  <footer class="hp-footer"><div>Hunger Pangs &middot; Travel Accommodation Portal &middot; For internal use</div></footer>
 </body>
 </html>
