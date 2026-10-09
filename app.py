@@ -1,22 +1,21 @@
 """
-Travel Accommodation Portal
-Flask + pyodbc (SQL Server) + MSAL/Microsoft Graph + Outlook Actionable Messages
+Travel Accommodation Portal (internal network)
+Flask + pyodbc (SQL Server) + MSAL/Microsoft Graph mail + signed approval links
 """
 import html
-import json
 import logging
 import os
 import re
+import secrets
 import uuid
 from datetime import date, datetime
 
-import jwt  # PyJWT
 import msal
 import pyodbc
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, make_response, render_template, request
-from jwt import PyJWKClient
+from flask import Flask, Response, abort, jsonify, render_template, request
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
 
@@ -27,14 +26,19 @@ TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
 CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
 
-# Mailbox the app sends from (must also be registered as a sender for the Originator)
+# Mailbox the app sends from (the app registration needs Graph Mail.Send for it)
 SENDER_MAILBOX = os.environ.get("SENDER_MAILBOX", "")
 
-# Provider ID from the Actionable Email Developer Dashboard
-ORIGINATOR_ID = os.environ.get("ORIGINATOR_ID", "REPLACE-WITH-ORIGINATOR-ID")
-
-# Public base URL of this app, no trailing slash, e.g. https://travel-portal.azurewebsites.net
+# Intranet base URL managers open from the approval email, no trailing slash, e.g. http://10.10.30.90:8080
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
+
+# Waitress bind address. 0.0.0.0 = reachable from the internal network on every interface of this server
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8080"))
+
+# Signs the Approve/Reject links in manager emails. Must stay constant, or links already sent stop working.
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+REVIEW_LINK_MAX_AGE = int(os.environ.get("REVIEW_LINK_MAX_AGE_DAYS", "30")) * 86400
 
 # Travel desk (Jigna, Mittal, Sagar) and CC (Pooja) - comma separated email addresses
 TRAVEL_DESK_TO = [e.strip() for e in os.environ.get("TRAVEL_DESK_TO", "").split(",") if e.strip()]
@@ -67,17 +71,17 @@ LOGO_URL = os.environ.get(
     "https://drive.google.com/thumbnail?id=1OpUw3MCFGLRs7GQ4xezk5ouqYTvy6yv9&sz=w200",
 )
 
-# Actionable Message token validation
-AM_ISSUER = "https://substrate.office.com/sts/"
-AM_OPENID_CONFIG = "https://substrate.office.com/sts/common/.well-known/openid-configuration"
-AM_APP_ID = os.environ.get("AM_APP_ID", "")  # optional extra check on the token's appid claim
-
 ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("travel-portal")
+
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_urlsafe(32)
+    log.warning("SECRET_KEY is not set: approval links will stop working when the server restarts")
+_review_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-review")
 
 
 # --------------------------------------------------------------------------
@@ -256,152 +260,59 @@ def details_table_html(r):
 
 
 # --------------------------------------------------------------------------
-# Adaptive Card builders (v1.4)
+# Manager approval links (intranet)
 # --------------------------------------------------------------------------
-def build_approval_card(r, notice=None):
-    rid = str(r["RequestId"])
-    action_url = f"{APP_BASE_URL}/api/approve"
-
-    def http_action(title, decision, style):
-        return {
-            "type": "Action.Http",
-            "title": title,
-            "style": style,
-            "method": "POST",
-            "url": action_url,
-            "headers": [{"name": "Content-Type", "value": "application/json"}],
-            "body": json.dumps({
-                "requestId": rid,
-                "decision": decision,
-                "comment": "{{comment.value}}",
-                "travelDetails": {
-                    "empCode": r["EmpCode"],
-                    "empName": r["EmpName"],
-                    "from": fmt_date(r["FromDate"]),
-                    "to": fmt_date(r["ToDate"]),
-                    "placeFrom": r["PlaceFrom"],
-                    "placeTo": r["PlaceTo"],
-                    "roomCategory": r["RoomCategory"],
-                },
-            }),
-        }
-
-    return {
-        "type": "AdaptiveCard",
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "version": "1.4",
-        "originator": ORIGINATOR_ID,
-        "body": ([{"type": "TextBlock", "text": notice, "color": "Attention", "weight": "Bolder",
-                   "wrap": True}] if notice else []) + [
-            {"type": "TextBlock", "text": "Travel Accommodation Approval", "size": "Large",
-             "weight": "Bolder", "wrap": True},
-            {"type": "TextBlock", "spacing": "None", "isSubtle": True, "wrap": True,
-             "text": f"{r['EmpName']} ({r['EmpCode']}) has requested travel and accommodation."},
-            {"type": "FactSet", "separator": True, "facts": [
-                {"title": "Emp Code", "value": r["EmpCode"]},
-                {"title": "Name", "value": r["EmpName"]},
-                {"title": "Designation", "value": r["Designation"]},
-                {"title": "Department", "value": r["Department"]},
-                {"title": "From (Date)", "value": fmt_date(r["FromDate"])},
-                {"title": "To (Date)", "value": fmt_date(r["ToDate"])},
-                {"title": "Place (From)", "value": r["PlaceFrom"]},
-                {"title": "Place (To)", "value": r["PlaceTo"]},
-                {"title": "Reason of Travel", "value": r.get("TravelReason") or "-"},
-                {"title": "Category of Room", "value": r["RoomCategory"]},
-                {"title": "Preferred Location", "value": r["PreferredLocation"] or "-"},
-            ]},
-            {"type": "Input.Text", "id": "comment", "isMultiline": True, "maxLength": 300,
-             "label": "Comment (optional for Approve, REQUIRED for Reject)",
-             "placeholder": "Reason for rejection / comment (shown to employee)"},
-        ],
-        "actions": [
-            http_action("Approve", "approve", "positive"),
-            http_action("Reject", "reject", "destructive"),
-        ],
-    }
+def make_review_token(request_id):
+    return _review_signer.dumps(str(request_id))
 
 
-def build_result_card(title, message, color="Good"):
-    return {
-        "type": "AdaptiveCard",
-        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-        "version": "1.4",
-        "body": [
-            {"type": "TextBlock", "text": title, "size": "Large", "weight": "Bolder",
-             "color": color, "wrap": True},
-            {"type": "TextBlock", "text": message, "wrap": True},
-        ],
-    }
-
-
-def card_email_html(r, card):
-    """HTML body embedding the Adaptive Card as an Actionable Message."""
-    fallback = (
-        "<p style='font-family:Segoe UI,Arial,sans-serif'>"
-        f"{html.escape(r['EmpName'])} has requested travel accommodation and needs your approval.</p>"
-        + details_table_html(r)
-    )
-    card_json = json.dumps(card).replace("</", "<\\/")  # keep </script> out of the JSON
-    return (
-        "<html><head>"
-        '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
-        f'<script type="application/adaptivecard+json">{card_json}</script>'
-        f"</head><body>{fallback}</body></html>"
-    )
-
-
-# --------------------------------------------------------------------------
-# Actionable Message token validation
-# --------------------------------------------------------------------------
-_jwk_client = None
-
-
-def _jwks():
-    global _jwk_client
-    if _jwk_client is None:
-        cfg = requests.get(AM_OPENID_CONFIG, timeout=10).json()
-        _jwk_client = PyJWKClient(cfg["jwks_uri"])
-    return _jwk_client
-
-
-def validate_action_token():
-    """Validate the bearer token Outlook attaches to Action.Http calls. Returns claims or None."""
-    auth = request.headers.get("Authorization", "")
-    if not auth.lower().startswith("bearer "):
-        return None
-    token = auth[7:]
+def check_review_token(request_id, token):
+    """True if the token was issued for this request and has not expired."""
     try:
-        key = _jwks().get_signing_key_from_jwt(token).key
-        claims = jwt.decode(
-            token, key, algorithms=["RS256"], audience=APP_BASE_URL, issuer=AM_ISSUER,
-            options={"require": ["exp", "iss", "aud"]},
-        )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Action token rejected: %s", exc)
-        return None
+        return _review_signer.loads(token, max_age=REVIEW_LINK_MAX_AGE) == str(request_id)
+    except (SignatureExpired, BadSignature):
+        return False
 
-    sender = str(claims.get("sender", "")).lower()
-    if sender != SENDER_MAILBOX.lower():
-        log.warning("Action token sender mismatch: %s", sender)
-        return None
-    if AM_APP_ID and claims.get("appid") != AM_APP_ID:
-        log.warning("Action token appid mismatch")
-        return None
-    return claims
+
+def review_url(request_id, decision):
+    return f"{APP_BASE_URL}/review/{request_id}?t={make_review_token(request_id)}&decision={decision}"
+
+
+def _email_button(label, url, color):
+    return (
+        f"<a href='{html.escape(url)}' style='display:inline-block;padding:10px 26px;margin-right:10px;"
+        f"background:{color};color:#ffffff;text-decoration:none;font-weight:600;border-radius:6px;"
+        f"font-family:Segoe UI,Arial,sans-serif;font-size:14px'>{html.escape(label)}</a>"
+    )
+
+
+def approval_email_html(r):
+    """Manager email: request details plus Approve / Reject links to the intranet review page."""
+    rid = r["RequestId"]
+    return (
+        "<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px'>"
+        f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has requested travel and "
+        "accommodation and needs your approval.</p>"
+        + details_table_html(r)
+        + "<p style='margin:20px 0'>"
+        + _email_button("Approve", review_url(rid, "approve"), "#16a34a")
+        + _email_button("Reject", review_url(rid, "reject"), "#dc2626")
+        + "</p><p style='color:#64748b;font-size:12px'>The buttons open the Travel Portal on the office "
+        "network, where you confirm your decision. A reason is required to reject. "
+        "They work only from the office network or VPN.</p></div>"
+    )
 
 
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
-import secrets  # noqa: E402
-from flask import Response  # noqa: E402
-
-_OPEN_PATHS = ("/api/approve", "/healthz")  # webhook has its own token check; health is for monitoring
+# /review/ links carry their own signed token; /healthz is for monitoring
+_OPEN_PREFIXES = ("/review/", "/healthz")
 
 
 @app.before_request
 def require_portal_login():
-    if not PORTAL_PASSWORD or request.path in _OPEN_PATHS:
+    if not PORTAL_PASSWORD or request.path.startswith(_OPEN_PREFIXES):
         return None
     auth = request.authorization
     if (auth
@@ -508,14 +419,13 @@ def submit_travel():
         return jsonify({"ok": False, "error": "Could not save the request."}), 500
 
     try:
-        card = build_approval_card(req)
         send_mail(
             [req["ManagerEmail"]],
             f"Approval required: Travel request for {req['EmpName']} ({req['EmpCode']})",
-            card_email_html(req, card),
+            approval_email_html(req),
         )
     except Exception:  # noqa: BLE001
-        log.exception("Failed to send approval card")
+        log.exception("Failed to send approval email")
         set_status(req["RequestId"], "MailFailed")
         return jsonify({"ok": False, "error": "Could not email your manager. Please contact support."}), 502
 
@@ -526,81 +436,78 @@ def submit_travel():
     })
 
 
-@app.post("/api/approve")
-def api_approve():
-    claims = validate_action_token()
-    if claims is None:
-        return jsonify({"error": "Unauthorized"}), 401
+def notify_decision(r, new_status, comment):
+    """Email the Travel Desk (on approval) and the employee after a manager decision."""
+    note_label = "Reason for rejection" if new_status == "Rejected" else "Manager comment"
+    notes = f"<p><b>{note_label}:</b> {html.escape(comment)}</p>" if comment else ""
+    if new_status == "Approved":
+        send_mail(
+            TRAVEL_DESK_TO,
+            f"Travel booking required: {r['EmpName']} ({r['EmpCode']}) - {r['PlaceFrom']} to {r['PlaceTo']}",
+            "<p style='font-family:Segoe UI,Arial,sans-serif'>Dear Jigna, Mittal and Sagar,</p>"
+            f"<p>The following travel request has been <b>approved</b> by {html.escape(r['ManagerName'])}. "
+            "Please arrange ticketing and accommodation.</p>"
+            + details_table_html(r) + notes,
+            cc=TRAVEL_DESK_CC,
+        )
+        emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
+                   "<b>approved</b> and forwarded to the Travel Desk.</p>")
+        subject = "Travel request approved"
+    else:
+        emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
+                   f"<b>rejected</b> by {html.escape(r['ManagerName'])}.</p>")
+        subject = "Travel request rejected"
+    send_mail([r["EmpEmail"]], subject,
+              "<div style='font-family:Segoe UI,Arial,sans-serif'>" + emp_msg
+              + details_table_html(r) + notes + "</div>")
 
-    data = request.get_json(silent=True) or {}
-    request_id = str(data.get("requestId", "")).strip()
-    decision = str(data.get("decision", "")).lower()
-    comment = str(data.get("comment", "") or "").strip()[:300]
-    if decision not in ("approve", "reject"):
-        return jsonify({"error": "Invalid decision"}), 400
+
+@app.route("/review/<request_id>", methods=["GET", "POST"])
+def review(request_id):
+    """Manager approval page. GET only shows the request (safe for mail link scanners); POST decides."""
+    token = request.values.get("t", "")
     try:
         uuid.UUID(request_id)
     except ValueError:
-        return jsonify({"error": "Invalid requestId"}), 400
+        abort(404)
+    if not check_review_token(request_id, token):
+        return render_template("review.html", state="invalid", logo_url=LOGO_URL), 403
 
-    r = load_request(request_id)  # trust the DB record, not the payload details
+    r = load_request(request_id)  # trust the DB record only
     if not r:
-        return jsonify({"error": "Request not found"}), 404
+        abort(404)
+    page = dict(r=r, token=token, fmt_date=fmt_date, logo_url=LOGO_URL)
 
-    # A rejection must carry a reason: re-show the same card (buttons stay active) with a notice
-    if decision == "reject" and not comment and r["Status"] == "Pending":
-        card = build_approval_card(
-            r, notice="Reason required: please type the reason for rejection in the box, then click Reject again.")
-        resp = make_response(jsonify(card), 200)
-        resp.headers["CARD-UPDATE-IN-BODY"] = "true"
-        return resp
+    if request.method == "GET":
+        if r["Status"] != "Pending":
+            return render_template("review.html", state="already", **page)
+        decision = request.args.get("decision", "")
+        return render_template("review.html", state="pending", decision=decision, comment="", **page)
+
+    decision = request.form.get("decision", "").lower()
+    comment = request.form.get("comment", "").strip()[:300]
+    if decision not in ("approve", "reject"):
+        return render_template("review.html", state="pending", decision="", comment=comment,
+                               error="Choose Approve or Reject.", **page), 400
+    if decision == "reject" and not comment:
+        return render_template("review.html", state="pending", decision="reject", comment="",
+                               error="A reason is required to reject this request.", **page), 400
 
     new_status = "Approved" if decision == "approve" else "Rejected"
     if not claim_decision(request_id, new_status, comment):
-        current = load_request(request_id)["Status"]
-        card = build_result_card("Already actioned", f"This request was already {current}.", "Warning")
-    else:
-        note_label = "Reason for rejection" if new_status == "Rejected" else "Manager comment"
-        notes = f"<p><b>{note_label}:</b> {html.escape(comment)}</p>" if comment else ""
-        try:
-            if new_status == "Approved":
-                send_mail(
-                    TRAVEL_DESK_TO,
-                    f"Travel booking required: {r['EmpName']} ({r['EmpCode']}) - {r['PlaceFrom']} to {r['PlaceTo']}",
-                    "<p style='font-family:Segoe UI,Arial,sans-serif'>Dear Jigna, Mittal and Sagar,</p>"
-                    f"<p>The following travel request has been <b>approved</b> by {html.escape(r['ManagerName'])}. "
-                    "Please arrange ticketing and accommodation.</p>"
-                    + details_table_html(r) + notes,
-                    cc=TRAVEL_DESK_CC,
-                )
-                emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
-                           "<b>approved</b> and forwarded to the Travel Desk.</p>")
-                subject = "Travel request approved"
-            else:
-                emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
-                           f"<b>rejected</b> by {html.escape(r['ManagerName'])}.</p>")
-                subject = "Travel request rejected"
-            send_mail([r["EmpEmail"]], subject,
-                      "<div style='font-family:Segoe UI,Arial,sans-serif'>" + emp_msg
-                      + details_table_html(r) + notes + "</div>")
-        except Exception:  # noqa: BLE001
-            log.exception("Post-decision email failed for %s", request_id)
+        page["r"] = load_request(request_id)
+        return render_template("review.html", state="already", **page)
 
-        card = build_result_card(
-            f"Action Completed: {new_status}",
-            f"{r['EmpName']}'s travel request ({fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}) "
-            f"has been {new_status.lower()}."
-            + (f" Reason: {comment}" if new_status == "Rejected" else ""),
-            "Good" if new_status == "Approved" else "Attention",
-        )
-
-    resp = make_response(jsonify(card), 200)
-    resp.headers["CARD-UPDATE-IN-BODY"] = "true"
-    return resp
+    try:
+        notify_decision(r, new_status, comment)
+    except Exception:  # noqa: BLE001
+        log.exception("Post-decision email failed for %s", request_id)
+    page["r"] = load_request(request_id)
+    return render_template("review.html", state="done", **page)
 
 
 if __name__ == "__main__":
     from waitress import serve
-    # Loopback only: the Cloudflare Tunnel (cloudflared) on this server is the sole entry point
-    print("Serving Travel Accommodation Portal on http://127.0.0.1:8080 ...")
-    serve(app, host="127.0.0.1", port=8080)
+    print(f"Serving Travel Accommodation Portal on http://{HOST}:{PORT} (links use {APP_BASE_URL or 'APP_BASE_URL not set'})",
+          flush=True)
+    serve(app, host=HOST, port=PORT, threads=8)
