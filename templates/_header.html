@@ -1,19 +1,13 @@
-{# Brand header: Hunger Pangs oval mark (or LOGO_URL if set) + app name #}
+{# Brand header, styled like hungerpangs.com: cream bar, maroon wordmark, terracotta nav text #}
 <header class="hp-header">
-  <div class="hp-header-inner">
-    <a class="hp-brand" href="/">
-      {% if logo_url %}
-        <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
-      {% else %}
-        <svg class="hp-wordmark" viewBox="0 0 360 32" role="img" aria-label="Hunger Pangs">
-          <text x="0" y="27" fill="#681313" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="31"
-                textLength="356" lengthAdjust="spacingAndGlyphs">HUNGER PANGS</text>
-        </svg>
-      {% endif %}
-      <span class="hp-divider" aria-hidden="true"></span>
-      <span class="hp-app-name">{{ app_name or 'Travel Accommodation Portal' }}</span>
-    </a>
-    <span class="hp-header-meta"><i class="fas fa-lock me-1"></i> Internal &middot; Travel Desk</span>
-  </div>
-  <div class="hp-band"></div>
+  <a class="hp-brand" href="/" aria-label="Hunger Pangs - Travel Accommodation Portal">
+    {% if logo_url %}
+      <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
+    {% else %}
+      <span class="hp-wordmark" role="img" aria-label="Hunger Pangs"></span>
+    {% endif %}
+  </a>
+  <nav class="hp-nav">
+    <a href="/">{{ app_name or 'Travel Accommodation Portal' }}</a>
+  </nav>
 </header>

@@ -7,7 +7,7 @@
     --hp-mustard: #c6ad1a;
     --hp-olive: #7f8e28;
     --hp-cream: #fffeeb;
-    --hp-bg: #fbf9f1;          /* page */
+    --hp-bg: #fffeeb;          /* page: same cream as the header, as on hungerpangs.com */
     --hp-surface: #ffffff;     /* cards */
     --hp-tint: #f7f3e6;        /* read-only fields, subtle panels */
     --hp-ink: #1d1d1d;
@@ -24,16 +24,15 @@
   h1, h2, h3, .hp-display { font-family: var(--hp-display); color: var(--hp-ink); letter-spacing: -0.015em; }
 
   /* Header */
-  .hp-header { background: var(--hp-cream); border-bottom: 1px solid var(--hp-line); }
-  .hp-header-inner { max-width: 1160px; margin: 0 auto; height: 64px; padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-  .hp-brand { display: flex; align-items: center; gap: 1rem; min-width: 0; color: var(--hp-maroon); text-decoration: none; }
-  .hp-wordmark { width: 210px; height: auto; display: block; flex: 0 0 auto; }
+  /* Same as hungerpangs.com: cream bar, no rule, maroon wordmark left, terracotta nav right */
+  .hp-header { background: var(--hp-cream); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 1.4rem 2rem; }
+  .hp-brand { display: block; flex: 0 1 auto; min-width: 0; text-decoration: none; }
+  .hp-wordmark { display: block; width: 360px; max-width: 100%; aspect-ratio: 1878 / 96; background: var(--hp-maroon);
+    -webkit-mask: url("/static/hp-wordmark.png") center / contain no-repeat; mask: url("/static/hp-wordmark.png") center / contain no-repeat; }
   .hp-logo-img { height: 36px; width: auto; display: block; }
-  .hp-divider { width: 1px; height: 22px; background: var(--hp-line-strong); }
-  .hp-app-name { font-weight: 600; font-size: .9rem; color: var(--hp-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .hp-header-meta { font-size: .8rem; color: var(--hp-muted); white-space: nowrap; }
-  .hp-band { display: none; }
-  @media (max-width: 575px) { .hp-header-meta, .hp-divider, .hp-app-name { display: none; } .hp-wordmark { width: 150px; } }
+  .hp-nav a { font-family: var(--hp-display); font-weight: 600; font-size: 1.15rem; color: var(--hp-terracotta); text-decoration: none; white-space: nowrap; }
+  .hp-nav a:hover { color: var(--hp-maroon); }
+  @media (max-width: 767px) { .hp-header { padding: 1.1rem 1rem; } .hp-wordmark { width: 220px; } .hp-nav { display: none; } }
 
   .page { width: 100%; max-width: 1160px; margin: 0 auto; padding: 2.25rem 1rem 3rem; flex: 1; }
   .page-head { margin-bottom: 1.75rem; }

@@ -345,8 +345,8 @@ def approval_email_html(r):
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
-# /review/ links carry their own signed token; /healthz is for monitoring
-_OPEN_PREFIXES = ("/review/", "/healthz")
+# /review/ links carry their own signed token; /healthz is for monitoring; /static/ is the logo
+_OPEN_PREFIXES = ("/review/", "/healthz", "/static/")
 
 
 @app.before_request
