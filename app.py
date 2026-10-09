@@ -61,15 +61,17 @@ MAPPING_TABLE = os.environ.get("MAPPING_TABLE", "dbo.checklist_empmanager_mappin
 EMP_EMAIL_COL = os.environ.get("EMP_EMAIL_COL", "EmpEmail")
 MGR_EMAIL_COL = os.environ.get("MGR_EMAIL_COL", "ManagerEmail")
 
+# HR master (name, email, status, Department/Designation ids) and the id -> name lookup tables
+EMPLOYEE_TABLE = os.environ.get("EMPLOYEE_TABLE", "dbo.tblEmployeeMaster")
+DEPARTMENT_TABLE = os.environ.get("DEPARTMENT_TABLE", "dbo.checklists_department")
+DESIGNATION_TABLE = os.environ.get("DESIGNATION_TABLE", "dbo.checklists_designation")
+
 # Optional login gate for the form (HTTP Basic). Leave PORTAL_PASSWORD empty to disable (local dev only).
 PORTAL_USER = os.environ.get("PORTAL_USER", "")
 PORTAL_PASSWORD = os.environ.get("PORTAL_PASSWORD", "")
 
-# Brand logo shown in the header (same logo as the Medical Tracker; override with LOGO_URL, empty hides it)
-LOGO_URL = os.environ.get(
-    "LOGO_URL",
-    "https://drive.google.com/thumbnail?id=1OpUw3MCFGLRs7GQ4xezk5ouqYTvy6yv9&sz=w200",
-)
+# Optional image for the header. Empty (default) shows the built-in Hunger Pangs mark.
+LOGO_URL = os.environ.get("LOGO_URL", "")
 
 ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
@@ -113,26 +115,63 @@ def _clean(v):
 
 
 def fetch_employee(emp_code):
-    """Employee + manager from the mapping table (emails are columns in that table). None if no row."""
+    """
+    Employee details from the HR master plus their reporting manager from the mapping table.
+    Emails come from the mapping table, falling back to the HR master.
+    Returns None if the code is in neither table. NeedsApproval is False when the employee
+    has no reporting manager on record (HODs / senior staff).
+    """
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            f"SELECT TOP 1 ManagerCode, {_q(EMP_EMAIL_COL)}, {_q(MGR_EMAIL_COL)} "
-            f"FROM {_q(MAPPING_TABLE)} WHERE EmpCode = ? ORDER BY id DESC",
+            f"""
+            SELECT e.EmpCode, e.EmployeeName, e.EmployeeEmail, e.Status, dep.name, des.name,
+                   m.ManagerCode, m.EmpEmail, m.ManagerEmail,
+                   mgr.EmployeeName, mgr.EmployeeEmail, mdes.name
+            FROM (SELECT CAST(? AS nvarchar(30)) AS EmpCode) k
+            LEFT JOIN {_q(EMPLOYEE_TABLE)} e ON e.EmpCode = k.EmpCode
+            LEFT JOIN {_q(DEPARTMENT_TABLE)} dep ON CAST(dep.id AS varchar(20)) = e.Department
+            LEFT JOIN {_q(DESIGNATION_TABLE)} des ON CAST(des.id AS varchar(20)) = e.Designation
+            OUTER APPLY (
+                SELECT TOP 1 ManagerCode, {_q(EMP_EMAIL_COL)} AS EmpEmail, {_q(MGR_EMAIL_COL)} AS ManagerEmail
+                FROM {_q(MAPPING_TABLE)} WHERE EmpCode = k.EmpCode ORDER BY id DESC
+            ) m
+            LEFT JOIN {_q(EMPLOYEE_TABLE)} mgr ON mgr.EmpCode = m.ManagerCode
+            LEFT JOIN {_q(DESIGNATION_TABLE)} mdes ON CAST(mdes.id AS varchar(20)) = mgr.Designation
+            """,
             emp_code,
         )
         row = cur.fetchone()
-    if not row or not _clean(row[0]):
+    (master_code, name, email, status, department, designation,
+     mgr_code, map_emp_email, map_mgr_email, mgr_name, mgr_email, mgr_designation) = row
+    mgr_code = _clean(mgr_code)
+    if not master_code and not mgr_code:
         return None
-    mgr_code = _clean(row[0])
     return {
-        "EmpCode": emp_code,
-        "EmpName": None,              # not stored in the mapping table; the typed name is used
-        "EmpEmail": _clean(row[1]),
+        "EmpCode": _clean(master_code) or emp_code,  # HR casing, e.g. "h189" -> "H189"
+        "EmpName": _clean(name),
+        "EmpEmail": _clean(map_emp_email) or _clean(email),
+        "Active": not master_code or _clean(status) == "Active",
+        "Designation": _clean(designation),
+        "Department": _clean(department),
+        "NeedsApproval": bool(mgr_code),
         "ManagerCode": mgr_code,
-        "ManagerName": mgr_code,      # shown as the code unless you add a ManagerName column
-        "ManagerEmail": _clean(row[2]),
+        "ManagerName": _clean(mgr_name) or mgr_code,
+        "ManagerDesignation": _clean(mgr_designation),
+        "ManagerEmail": _clean(map_mgr_email) or _clean(mgr_email),
     }
+
+
+def employee_problem(emp):
+    """A reason this employee cannot submit yet (shown at lookup time), or None."""
+    if not emp["Active"]:
+        return "This employee code is not active in HR records."
+    if emp["NeedsApproval"] and not emp["ManagerEmail"]:
+        return (f"Your manager ({emp['ManagerName']}) has no email address on record, so the approval "
+                "email cannot be sent. Please ask HR to update it.")
+    if not emp["EmpEmail"]:
+        return "Your email address is not on record. Please ask HR to update it."
+    return None
 
 
 def insert_request(req):
@@ -245,8 +284,8 @@ def details_table_html(r):
         ("Department", r["Department"]),
         ("From (Date)", fmt_date(r["FromDate"])),
         ("To (Date)", fmt_date(r["ToDate"])),
-        ("Place (From)", r["PlaceFrom"]),
-        ("Place (To)", r["PlaceTo"]),
+        ("Travelling From", r["PlaceFrom"]),
+        ("Travelling To", r["PlaceTo"]),
         ("Reason of Travel", r.get("ReasonOfTravel") or "-"),
         ("Category of Room", r["RoomCategory"]),
         ("Preferred Location", r["PreferredLocation"] or "-"),
@@ -347,8 +386,12 @@ def api_employee(emp_code):
     return jsonify({
         "found": True,
         "empName": emp["EmpName"] or "",
-        "managerName": emp["ManagerName"],
-        "managerCode": emp["ManagerCode"],
+        "designation": emp["Designation"] or "",
+        "department": emp["Department"] or "",
+        "needsApproval": emp["NeedsApproval"],
+        "managerName": emp["ManagerName"] if emp["NeedsApproval"] else None,
+        "managerDesignation": emp["ManagerDesignation"] if emp["NeedsApproval"] else None,
+        "problem": employee_problem(emp),
     })
 
 
@@ -366,7 +409,7 @@ def submit_travel():
     missing = [n for n, v in {
         "Emp Code": emp_code, "Designation": designation, "Department": department,
         "From (Date)": get("from_date"), "To (Date)": get("to_date"),
-        "Place (From)": place_from, "Place (To)": place_to, "Reason of Travel": travel_reason,
+        "Travelling From": place_from, "Travelling To": place_to, "Reason of Travel": travel_reason,
         "Category of Room": room,
     }.items() if not v]
     if missing:
@@ -393,19 +436,20 @@ def submit_travel():
         return jsonify({"ok": False, "error": "Database error. Please try again."}), 500
     if not emp:
         return jsonify({"ok": False, "error": f"Employee code '{emp_code}' not found"}), 404
+    problem = employee_problem(emp)
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 422
     emp["EmpName"] = emp["EmpName"] or get("emp_name")
     if not emp["EmpName"]:
         return jsonify({"ok": False, "error": "Name of Person travelling is required"}), 400
-    if not emp["ManagerEmail"]:
-        return jsonify({"ok": False, "error": f"No email found for manager code {emp['ManagerCode']}"}), 422
-    if not emp["EmpEmail"]:
-        return jsonify({"ok": False, "error": f"No email found for employee code {emp_code}"}), 422
 
-    # Name / manager always come from the DB, never from the browser
+    # HR-record values (name, designation, department, manager) win over what the browser sent
     req = {
         "RequestId": str(uuid.uuid4()),
-        **{k: emp[k] for k in ("EmpCode", "EmpName", "EmpEmail", "ManagerCode", "ManagerName", "ManagerEmail")},
-        "Designation": designation, "Department": department,
+        **{k: emp[k] for k in ("EmpCode", "EmpName", "EmpEmail", "ManagerCode")},
+        "ManagerName": emp["ManagerName"] if emp["NeedsApproval"] else None,
+        "ManagerEmail": emp["ManagerEmail"] if emp["NeedsApproval"] else "",  # column is NOT NULL
+        "Designation": emp["Designation"] or designation, "Department": emp["Department"] or department,
         "FromDate": from_date, "ToDate": to_date,
         "PlaceFrom": place_from, "PlaceTo": place_to,
         "RoomCategory": room, "PreferredLocation": pref_loc,
@@ -417,6 +461,20 @@ def submit_travel():
     except Exception:  # noqa: BLE001
         log.exception("DB error during insert")
         return jsonify({"ok": False, "error": "Could not save the request."}), 500
+
+    if not emp["NeedsApproval"]:
+        # No reporting manager on record (HOD / senior staff): straight to the Travel Desk
+        claim_decision(req["RequestId"], "Approved", DIRECT_NOTE)
+        try:
+            notify_decision(load_request(req["RequestId"]), "Approved", "")
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to email the Travel Desk")
+            set_status(req["RequestId"], "MailFailed")
+            return jsonify({"ok": False, "error": "Could not email the Travel Desk. Please contact support."}), 502
+        return jsonify({
+            "ok": True, "requestId": req["RequestId"], "needsApproval": False,
+            "message": "Request submitted and sent directly to the Travel Desk.",
+        })
 
     try:
         send_mail(
@@ -432,27 +490,37 @@ def submit_travel():
     return jsonify({
         "ok": True,
         "requestId": req["RequestId"],
+        "needsApproval": True,
         "message": f"Request submitted. Approval email sent to {req['ManagerName']}.",
     })
 
 
+DIRECT_NOTE = "No reporting manager on record: sent directly to the Travel Desk"
+
+
 def notify_decision(r, new_status, comment):
-    """Email the Travel Desk (on approval) and the employee after a manager decision."""
+    """Email the Travel Desk (on approval) and the employee after a decision.
+    Requests from employees with no reporting manager (ManagerCode empty) skip manager approval."""
+    direct = not r.get("ManagerCode")
     note_label = "Reason for rejection" if new_status == "Rejected" else "Manager comment"
     notes = f"<p><b>{note_label}:</b> {html.escape(comment)}</p>" if comment else ""
     if new_status == "Approved":
+        how = ("submitted by an employee with <b>no reporting manager on record</b> (HOD / senior staff), "
+               "so no manager approval was required" if direct
+               else f"<b>approved</b> by {html.escape(r['ManagerName'])}")
         send_mail(
             TRAVEL_DESK_TO,
             f"Travel booking required: {r['EmpName']} ({r['EmpCode']}) - {r['PlaceFrom']} to {r['PlaceTo']}",
             "<p style='font-family:Segoe UI,Arial,sans-serif'>Dear Jigna, Mittal and Sagar,</p>"
-            f"<p>The following travel request has been <b>approved</b> by {html.escape(r['ManagerName'])}. "
+            f"<p>The following travel request was {how}. "
             "Please arrange ticketing and accommodation.</p>"
             + details_table_html(r) + notes,
             cc=TRAVEL_DESK_CC,
         )
         emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
-                   "<b>approved</b> and forwarded to the Travel Desk.</p>")
-        subject = "Travel request approved"
+                   + ("sent to the Travel Desk.</p>" if direct
+                      else "<b>approved</b> and forwarded to the Travel Desk.</p>"))
+        subject = "Travel request sent to the Travel Desk" if direct else "Travel request approved"
     else:
         emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
                    f"<b>rejected</b> by {html.escape(r['ManagerName'])}.</p>")

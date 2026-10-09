@@ -4,64 +4,67 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex">
-  <title>Travel Request Approval</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <title>Travel Request Approval | Hunger Pangs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  {% include "_brand.html" %}
   <style>
-    :root { --primary-color: #1e5374; --secondary-color: #e86323; --accent-color: #f3c468; }
-    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(circle at top, #ffffff 0, #f3f6fb 45%, #e5edf7 100%); min-height: 100vh; color: #1e293b; }
-    .header-logo-container { padding: 1.25rem 2rem; display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid #e2e8f0; background: #fff; }
-    .header-title { color: var(--primary-color); font-weight: 800; font-size: 1.6rem; margin: 0; }
-    .brand-logo-circle { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent-color); background: #fff; }
-    .card-container { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px rgba(0,0,0,0.05); padding: 1.5rem; margin-bottom: 1.5rem; }
-    .section-title { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1rem; margin-bottom: 1rem; padding-bottom: .6rem; border-bottom: 2px solid #e2e8f0; }
-    .section-title i { color: var(--secondary-color); }
-    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem 0; border-bottom: 1px solid #f1f5f9; font-size: .9rem; }
-    .summary-row span:first-child { color: #64748b; font-weight: 600; white-space: nowrap; }
+    .page { max-width: 760px; }
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .6rem 0; border-bottom: 1px solid var(--hp-line); font-size: .92rem; }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row span:first-child { color: var(--hp-muted); font-weight: 600; white-space: nowrap; }
     .summary-row span:last-child { font-weight: 600; text-align: right; }
-    .decision-option { border: 2px solid #e2e8f0; border-radius: 10px; padding: .85rem 1rem; cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: .6rem; }
-    .btn-check:checked + .decision-option.approve { border-color: #16a34a; background: #f0fdf4; color: #166534; }
-    .btn-check:checked + .decision-option.reject { border-color: #dc2626; background: #fef2f2; color: #991b1b; }
-    .btn-primary { background: linear-gradient(to right, #1e5374, #2873a1); border: none; font-weight: 600; }
-    .form-label { font-weight: 600; font-size: .85rem; color: #64748b; }
+    .decision-option { border: 2px solid var(--hp-line); border-radius: 14px; padding: .9rem 1rem; cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: .6rem; background: #fff; }
+    .decision-option:hover { border-color: #d8cba5; }
+    .btn-check:checked + .decision-option.approve { border-color: var(--hp-olive); background: #f2f5e3; color: #56611a; }
+    .btn-check:checked + .decision-option.reject { border-color: var(--hp-terracotta); background: #fdf0ed; color: #9b3523; }
+    .btn-check:focus-visible + .decision-option { box-shadow: 0 0 0 .2rem rgba(197,75,54,.25); }
+    .result { display: flex; gap: .9rem; align-items: flex-start; border-radius: 14px; padding: 1rem 1.15rem; margin-bottom: 1.25rem; font-size: .95rem; }
+    .result i { font-size: 1.25rem; margin-top: .1rem; }
+    .result.ok { background: #f2f5e3; color: #3f4813; border: 1px solid #d9e0b0; }
+    .result.bad { background: #fdf0ed; color: #7c2a1c; border: 1px solid #f0c4b9; }
+    .result.info { background: #fbf1cc; color: #5e520b; border: 1px solid #ecdc95; }
   </style>
 </head>
 <body>
-  <div class="header-logo-container mb-4">
-    {% if logo_url %}<img src="{{ logo_url }}" alt="" class="brand-logo-circle" onerror="this.style.display='none'">{% endif %}
-    <h1 class="header-title">Travel Request Approval</h1>
-  </div>
+  {% set page_title = 'Travel Request Approval' %}
+  {% include "_header.html" %}
 
-  <div class="container px-3" style="max-width: 720px;">
+  <main class="page">
 
   {% if state == 'invalid' %}
-    <div class="card-container text-center">
-      <i class="fas fa-link-slash fa-2x text-danger mb-3"></i>
-      <h5 class="fw-bold">This approval link is invalid or has expired</h5>
-      <p class="text-muted mb-0">Ask the employee to submit a new travel request.</p>
-    </div>
+    <section class="hp-card text-center py-5">
+      <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
+      <h2 class="display-title">This approval link is invalid or has expired</h2>
+      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new travel request.</p>
+    </section>
 
   {% else %}
     {% if state == 'done' or state == 'already' %}
       {% set ok = r.Status == 'Approved' %}
-      <div class="alert {{ 'alert-success' if ok else 'alert-warning' if state == 'already' else 'alert-danger' }}">
-        <i class="fas {{ 'fa-circle-check' if ok else 'fa-circle-info' }} me-2"></i>
-        {% if state == 'done' %}
-          Done: the request has been <strong>{{ r.Status | lower }}</strong>.
-          {{ 'The Travel Desk and the employee have been notified.' if ok else 'The employee has been notified.' }}
-        {% else %}
-          This request was already <strong>{{ r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
-        {% endif %}
+      <div class="result {{ 'info' if state == 'already' else 'ok' if ok else 'bad' }}">
+        <i class="fas {{ 'fa-circle-info' if state == 'already' else 'fa-circle-check' if ok else 'fa-circle-xmark' }}"></i>
+        <div>
+          {% if state == 'done' %}
+            The request has been <strong>{{ r.Status | lower }}</strong>.
+            {{ 'The Travel Desk and the employee have been notified.' if ok else 'The employee has been notified.' }}
+          {% else %}
+            This request was already <strong>{{ r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
+          {% endif %}
+        </div>
       </div>
     {% endif %}
 
-    <div class="card-container">
-      <div class="section-title"><i class="fas fa-plane-departure"></i> {{ r.EmpName }} ({{ r.EmpCode }})</div>
+    <section class="hp-card">
+      <div class="eyebrow mb-1">Travel request</div>
+      <h2 class="display-title mb-3">{{ r.EmpName }} <span style="color: var(--hp-muted); font-weight: 600; font-size: 1.05rem">({{ r.EmpCode }})</span></h2>
       {% for label, value in [
           ('Designation', r.Designation), ('Department', r.Department),
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
-          ('Place (From)', r.PlaceFrom), ('Place (To)', r.PlaceTo),
+          ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
           ('Preferred Location', r.PreferredLocation or '-')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
@@ -69,12 +72,12 @@
       {% if r.Status != 'Pending' and r.ActionComment %}
         <div class="summary-row"><span>{{ 'Reason for rejection' if r.Status == 'Rejected' else 'Manager comment' }}</span><span>{{ r.ActionComment }}</span></div>
       {% endif %}
-    </div>
+    </section>
 
     {% if state == 'pending' %}
-    <form method="post" class="card-container" id="decisionForm">
-      <div class="section-title"><i class="fas fa-gavel"></i> Your decision</div>
-      {% if error %}<div class="alert alert-danger py-2"><i class="fas fa-triangle-exclamation me-2"></i>{{ error }}</div>{% endif %}
+    <form method="post" class="hp-card" id="decisionForm">
+      <h2 class="section-title"><i class="fas fa-gavel"></i> Your decision</h2>
+      {% if error %}<div class="result bad py-2"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
       <input type="hidden" name="t" value="{{ token }}">
       <div class="row g-2 mb-3">
         <div class="col-6">
@@ -90,7 +93,7 @@
       <textarea class="form-control mb-3" id="comment" name="comment" rows="3" maxlength="300"
         placeholder="Shown to the employee">{{ comment }}</textarea>
       <div class="d-flex justify-content-end">
-        <button type="submit" class="btn btn-primary px-4"><i class="fas fa-paper-plane me-1"></i> Submit decision</button>
+        <button type="submit" class="btn btn-hp"><i class="fas fa-paper-plane me-1"></i> Submit decision</button>
       </div>
     </form>
     <script>
@@ -99,13 +102,13 @@
       function sync() {
         const reject = document.getElementById('dReject').checked;
         comment.required = reject;
-        label.innerHTML = reject ? 'Reason for rejection <span class="text-danger">*</span>' : 'Comment (optional)';
+        label.innerHTML = reject ? 'Reason for rejection <span class="req">*</span>' : 'Comment (optional)';
       }
       document.querySelectorAll('input[name=decision]').forEach(el => el.addEventListener('change', sync));
       sync();
     </script>
     {% endif %}
   {% endif %}
-  </div>
+  </main>
 </body>
 </html>

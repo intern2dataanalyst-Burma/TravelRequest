@@ -1,0 +1,63 @@
+{# Hunger Pangs brand theme (palette and type from hungerpangs.com), shared by every page #}
+<style>
+  :root {
+    --hp-cream: #fffeeb;      /* page background */
+    --hp-cream-2: #fbf6df;    /* tinted surfaces, locked fields */
+    --hp-maroon: #681313;     /* header, headings */
+    --hp-terracotta: #c54b36; /* primary actions, accents */
+    --hp-mustard: #c6ad1a;
+    --hp-olive: #7f8e28;      /* success */
+    --hp-ink: #1d1d1d;
+    --hp-muted: #6b5d55;
+    --hp-line: #ece3c8;
+    --hp-display: "Bricolage Grotesque", system-ui, sans-serif;
+    --hp-label: Optima, Candara, "Segoe UI", sans-serif;
+  }
+  body { font-family: var(--hp-display); background: var(--hp-cream); color: var(--hp-ink); min-height: 100vh; }
+
+  /* Header */
+  .hp-header { background: var(--hp-maroon); color: var(--hp-cream); }
+  .hp-header-inner { max-width: 1100px; margin: 0 auto; padding: 1.1rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .hp-brand { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+  .hp-mark { flex: 0 0 auto; width: 88px; height: auto; display: block; }
+  .hp-logo-img { height: 52px; width: auto; display: block; }
+  .hp-header .eyebrow { color: #f1d98a; }
+  .hp-title { font-weight: 800; font-size: clamp(1.25rem, 3vw, 1.85rem); letter-spacing: -0.02em; line-height: 1.1; margin: 0; color: var(--hp-cream); }
+  .hp-chip { flex: 0 0 auto; border: 1px solid rgba(255,254,235,.45); color: var(--hp-cream); border-radius: 40px; padding: .45rem 1rem; font-size: .85rem; font-weight: 600; white-space: nowrap; }
+  .hp-band { height: 6px; background: linear-gradient(90deg, var(--hp-terracotta) 0 60%, var(--hp-mustard) 60% 85%, var(--hp-olive) 85%); }
+  @media (max-width: 575px) { .hp-chip { display: none; } .hp-mark { width: 68px; } }
+
+  .page { max-width: 1100px; margin: 0 auto; padding: 1.75rem 1rem 1rem; }
+  .eyebrow { font-family: var(--hp-label); text-transform: uppercase; font-size: .72rem; font-weight: 600; letter-spacing: .14em; color: var(--hp-terracotta); }
+
+  /* Cards */
+  .hp-card { background: #fff; border: 1px solid var(--hp-line); border-radius: 18px; padding: 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 1px 0 rgba(104,19,19,.04), 0 8px 24px -18px rgba(104,19,19,.35); }
+  .section-title { display: flex; align-items: center; gap: .6rem; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; color: var(--hp-maroon); margin: 0 0 1.1rem; padding-bottom: .7rem; border-bottom: 1px solid var(--hp-line); }
+  .section-title i { color: var(--hp-terracotta); font-size: 1rem; }
+  .display-title { font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em; color: var(--hp-maroon); }
+
+  /* Form controls */
+  .form-label { font-family: var(--hp-label); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; font-size: .74rem; color: var(--hp-muted); margin-bottom: .4rem; }
+  .req { color: var(--hp-terracotta); }
+  .form-control, .form-select { border-radius: 10px; border: 1px solid #ddd2b4; font-size: .95rem; padding: .6rem .8rem; color: var(--hp-ink); }
+  .form-control:focus, .form-select:focus { border-color: var(--hp-terracotta); box-shadow: 0 0 0 .2rem rgba(197,75,54,.15); }
+  .form-control.is-valid { border-color: var(--hp-olive); background-image: none; }
+  .input-icon { position: relative; }
+  .input-icon i.lead-icon { position: absolute; top: 14px; left: 14px; color: #a08f7a; font-size: .9rem; z-index: 1; }
+  .input-icon .form-control, .input-icon .form-select { padding-left: 40px; }
+
+  /* Buttons (pill shape, as on hungerpangs.com) */
+  .btn-hp, .btn-hp-outline { border-radius: 40px; font-weight: 600; padding: .65rem 1.6rem; transition: background .15s, color .15s, border-color .15s; }
+  .btn-hp { background: var(--hp-terracotta); border: 1px solid var(--hp-terracotta); color: var(--hp-cream); }
+  .btn-hp:hover, .btn-hp:focus { background: var(--hp-maroon); border-color: var(--hp-maroon); color: var(--hp-cream); }
+  .btn-hp-outline { background: transparent; border: 1px solid var(--hp-maroon); color: var(--hp-maroon); }
+  .btn-hp-outline:hover { background: var(--hp-maroon); color: var(--hp-cream); }
+
+  /* Status pills */
+  .pill { display: inline-flex; align-items: center; padding: .35rem .85rem; border-radius: 999px; font-weight: 700; font-size: .78rem; }
+  .pill-pending { background: #fbf1cc; color: #7a6a0e; border: 1px solid #ecdc95; }
+  .pill-ok { background: #f2f5e3; color: #56611a; border: 1px solid #d9e0b0; }
+  .pill-bad { background: #fdf0ed; color: #9b3523; border: 1px solid #f0c4b9; }
+
+  .alert { border-radius: 12px; }
+</style>
