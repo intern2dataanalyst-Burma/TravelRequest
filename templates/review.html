@@ -62,7 +62,7 @@
           ('Designation', r.Designation), ('Department', r.Department),
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
           ('Place (From)', r.PlaceFrom), ('Place (To)', r.PlaceTo),
-          ('Reason of Travel', r.TravelReason or '-'), ('Category of Room', r.RoomCategory),
+          ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
           ('Preferred Location', r.PreferredLocation or '-')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
       {% endfor %}

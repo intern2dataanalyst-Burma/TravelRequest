@@ -143,14 +143,14 @@ def insert_request(req):
             INSERT INTO TravelRequests
               (RequestId, EmpCode, EmpName, EmpEmail, ManagerCode, ManagerName, ManagerEmail,
                Designation, Department, FromDate, ToDate, PlaceFrom, PlaceTo,
-               RoomCategory, PreferredLocation, TravelReason, Status)
+               RoomCategory, PreferredLocation, ReasonOfTravel, Status)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Pending')
             """,
             req["RequestId"], req["EmpCode"], req["EmpName"], req["EmpEmail"],
             req["ManagerCode"], req["ManagerName"], req["ManagerEmail"],
             req["Designation"], req["Department"], req["FromDate"], req["ToDate"],
             req["PlaceFrom"], req["PlaceTo"], req["RoomCategory"], req["PreferredLocation"],
-            req["TravelReason"],
+            req["ReasonOfTravel"],
         )
         conn.commit()
 
@@ -247,7 +247,7 @@ def details_table_html(r):
         ("To (Date)", fmt_date(r["ToDate"])),
         ("Place (From)", r["PlaceFrom"]),
         ("Place (To)", r["PlaceTo"]),
-        ("Reason of Travel", r.get("TravelReason") or "-"),
+        ("Reason of Travel", r.get("ReasonOfTravel") or "-"),
         ("Category of Room", r["RoomCategory"]),
         ("Preferred Location", r["PreferredLocation"] or "-"),
     ]
@@ -409,7 +409,7 @@ def submit_travel():
         "FromDate": from_date, "ToDate": to_date,
         "PlaceFrom": place_from, "PlaceTo": place_to,
         "RoomCategory": room, "PreferredLocation": pref_loc,
-        "TravelReason": travel_reason,
+        "ReasonOfTravel": travel_reason,
     }
 
     try:
