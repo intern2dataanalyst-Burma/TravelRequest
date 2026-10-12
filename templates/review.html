@@ -43,7 +43,7 @@
 
   {% else %}
     <div class="page-head">
-      <div class="eyebrow mb-2">Travel request &middot; {{ r.EmpCode }}</div>
+      <div class="eyebrow mb-2">Booking Ref: {{ booking_ref(r) }} &middot; {{ r.EmpCode }}</div>
       <h1>{{ r.EmpName }}</h1>
       <p>{{ r.Designation }}{% if r.Department %} &middot; {{ r.Department }}{% endif %}</p>
     </div>

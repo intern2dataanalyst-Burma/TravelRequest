@@ -314,8 +314,35 @@ def fmt_date(d):
     return str(d)
 
 
+def booking_ref(r):
+    """Short reference for emails and pages, e.g. '#10001'. Falls back to the GUID prefix before migration 003."""
+    if r.get("BookingRefID"):
+        return f"#{r['BookingRefID']}"
+    return "#" + str(r["RequestId"])[:8].upper()
+
+
+def with_ref(r, subject):
+    return f"Booking Ref: {booking_ref(r)} - {subject}"
+
+
+# Email building blocks. Inline styles only (email clients ignore <style> blocks); tables are 100% wide up to
+# 600px so they fill a phone screen and stay readable on desktop.
+_TABLE = ("role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+          "style='width:100%;max-width:600px;border-collapse:collapse;font-family:Segoe UI,Arial,sans-serif'")
+_BOX = ("role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+        "style='width:100%;max-width:600px;border-collapse:separate;margin:0 0 18px;border-radius:12px;{}'")
+
+
+def ref_badge_html(r):
+    return ("<p style='margin:0 0 16px'><span style='display:inline-block;padding:5px 12px;border-radius:999px;"
+            "background:#f7efdd;color:#681313;font-weight:700;font-size:13px'>"
+            f"Booking Ref: {html.escape(booking_ref(r))}</span></p>")
+
+
 def details_table_html(r, booking=True):
+    """Employee and trip details. booking=False leaves out the Travel Desk's booking (shown in its own box)."""
     rows = [
+        ("Booking Ref", booking_ref(r)),
         ("Emp Code", r["EmpCode"]),
         ("Name", r["EmpName"]),
         ("Designation", r["Designation"]),
@@ -328,21 +355,57 @@ def details_table_html(r, booking=True):
         ("Category of Room", r["RoomCategory"]),
         ("Preferred Location", r["PreferredLocation"] or "-"),
     ]
+    if booking and r.get("PropertyName"):
+        rows += booking_rows(r)
     body = "".join(
-        f"<tr><td style='padding:4px 12px 4px 0;font-weight:600'>{html.escape(k)}</td>"
-        f"<td style='padding:4px 0'>{html.escape(str(v))}</td></tr>"
+        "<tr>"
+        "<td width='40%' style='width:40%;padding:9px 12px 9px 0;border-bottom:1px solid #efe7d5;color:#7a6f66;"
+        f"font-size:13px;vertical-align:top'>{html.escape(k)}</td>"
+        "<td style='padding:9px 0;border-bottom:1px solid #efe7d5;color:#1d1d1d;font-size:14px;font-weight:600;"
+        f"vertical-align:top;word-break:break-word'>{html.escape(str(v))}</td>"
+        "</tr>"
         for k, v in rows
     )
-    if booking and r.get("PropertyName"):  # filled in by the Travel Desk at step 2
-        body += (
-            "<tr><td colspan='2' style='padding:14px 0 4px;font-weight:700;color:#681313'>Booking arranged by the "
-            "Travel Desk</td></tr>"
-            + "".join(
-                f"<tr><td style='padding:4px 12px 4px 0;font-weight:600'>{html.escape(k)}</td>"
-                f"<td style='padding:4px 0;font-weight:600;color:#1d1d1d'>{html.escape(v)}</td></tr>"
-                for k, v in booking_rows(r))
-        )
-    return f"<table style='font-family:Segoe UI,Arial,sans-serif;font-size:14px'>{body}</table>"
+    return f"<table {_TABLE}>{body}</table>"
+
+
+def booking_box_html(r, title="Booking arranged by the Travel Desk"):
+    """The Travel Desk's booking (Place/Area, Property Name, Cost) in a soft, brand-tinted box."""
+    rows = "".join(
+        "<tr>"
+        f"<td width='40%' style='width:40%;padding:6px 12px 6px 0;color:#8a5a4c;font-size:13px'>{html.escape(k)}</td>"
+        "<td style='padding:6px 0;color:#1d1d1d;font-size:15px;font-weight:700;word-break:break-word'>"
+        f"{html.escape(v)}</td></tr>"
+        for k, v in booking_rows(r)
+    )
+    return (
+        f"<table {_BOX.format('background:#fdf3ec;border:1px solid #f3dccf')}>"
+        "<tr><td style='padding:14px 18px;font-family:Segoe UI,Arial,sans-serif'>"
+        "<div style='font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#c54b36;"
+        f"margin-bottom:6px'>{html.escape(title)}</div>"
+        f"<table {_TABLE}>{rows}</table>"
+        "</td></tr></table>"
+    )
+
+
+def reason_box_html(label, text):
+    """The manager's reason/comment, highlighted."""
+    return (
+        f"<table {_BOX.format('background:#fbeae6;border:1px solid #f0c4b9')}>"
+        "<tr><td style='padding:14px 18px;font-family:Segoe UI,Arial,sans-serif'>"
+        "<div style='font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9b3523;"
+        f"margin-bottom:4px'>{html.escape(label)}</div>"
+        f"<div style='font-size:15px;color:#1d1d1d;word-break:break-word'>{html.escape(text)}</div>"
+        "</td></tr></table>"
+    )
+
+
+app.jinja_env.globals["booking_ref"] = booking_ref  # templates show the same reference
+
+
+def email_html(*parts):
+    """Wrap an email body: 600px max, full width on phones."""
+    return f"<div style='{EMAIL_FONT};max-width:600px;line-height:1.5'>" + "".join(parts) + "</div>"
 
 
 def fmt_inr(amount):
@@ -408,35 +471,33 @@ def desk_email_html(r):
             f"Once arranged, click the button to send the booking to <b>{html.escape(r['ManagerName'])}</b> "
             "for approval.")
     label = "Booking Arranged - Confirm" if direct else "Booking Arranged - Send to Manager"
-    return (
-        f"<div style='{EMAIL_FONT}'><p>Dear Sagar, Jigna and Mittal,</p>"
+    return email_html(
+        ref_badge_html(r),
+        "<p>Dear Sagar, Jigna and Mittal,</p>",
         f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a travel request. "
-        f"Please arrange tickets and accommodation. {then}</p>"
-        + details_table_html(r)
-        + "<p style='margin:20px 0'>" + _email_button(label, desk_url(r["RequestId"]), "#c54b36") + "</p>"
-        + LINK_NOTE + "</div>"
+        f"Please arrange tickets and accommodation. {then}</p>",
+        details_table_html(r),
+        "<p style='margin:22px 0 8px'>", _email_button(label, desk_url(r["RequestId"]), "#c54b36"), "</p>",
+        LINK_NOTE,
     )
 
 
 def manager_email_html(r):
     """Step 2 - Manager: the Travel Desk has arranged the booking; approve or reject it."""
     rid = r["RequestId"]
-    return (
-        f"<div style='{EMAIL_FONT}'><p>Dear {html.escape(r['ManagerName'])},</p>"
+    return email_html(
+        ref_badge_html(r),
+        f"<p>Dear {html.escape(r['ManagerName'])},</p>",
         f"<p>The Travel Desk has arranged tickets and accommodation for {html.escape(r['EmpName'])} "
         f"({html.escape(r['EmpCode'])}). Please review and approve or reject the booking. "
-        "A reason is required to reject.</p>"
-        "<table style='border-collapse:collapse;margin:4px 0 16px;background:#fbf6e6;border-left:4px solid #c54b36'>"
-        + "".join(
-            f"<tr><td style='padding:6px 16px 6px 12px;color:#7a6f66;font-size:13px'>{html.escape(k)}</td>"
-            f"<td style='padding:6px 12px 6px 0;font-weight:700;font-size:15px;color:#1d1d1d'>{html.escape(v)}</td></tr>"
-            for k, v in booking_rows(r))
-        + "</table>"
-        + details_table_html(r, booking=False)
-        + "<p style='margin:20px 0'>"
-        + _email_button("Approve", review_url(rid, "approve"), "#7f8e28")
-        + _email_button("Reject", review_url(rid, "reject"), "#c54b36")
-        + "</p>" + LINK_NOTE + "</div>"
+        "A reason is required to reject.</p>",
+        booking_box_html(r),
+        details_table_html(r, booking=False),
+        "<p style='margin:22px 0 8px'>",
+        _email_button("Approve", review_url(rid, "approve"), "#7f8e28"),
+        _email_button("Reject", review_url(rid, "reject"), "#c54b36"),
+        "</p>",
+        LINK_NOTE,
     )
 
 
@@ -556,6 +617,7 @@ def submit_travel():
 
     try:
         insert_request(req)
+        req = load_request(req["RequestId"]) or req  # picks up the database-assigned BookingRefID
     except Exception:  # noqa: BLE001
         log.exception("DB error during insert")
         return jsonify({"ok": False, "error": "Could not save the request."}), 500
@@ -563,7 +625,8 @@ def submit_travel():
     try:
         send_mail(
             TRAVEL_DESK_TO,
-            f"Booking required: {req['EmpName']} ({req['EmpCode']}) - {req['PlaceFrom']} to {req['PlaceTo']}",
+            with_ref(req, f"Booking required: {req['EmpName']} ({req['EmpCode']}) - "
+                          f"{req['PlaceFrom']} to {req['PlaceTo']}"),
             desk_email_html(req),
             cc=TRAVEL_DESK_CC,
         )
@@ -574,7 +637,8 @@ def submit_travel():
 
     return jsonify({
         "ok": True,
-        "requestId": req["RequestId"],
+        "requestId": str(req["RequestId"]),
+        "bookingRef": booking_ref(req),
         "needsApproval": emp["NeedsApproval"],
         "message": "Request submitted. The Travel Desk has been asked to arrange your booking"
                    + (f"; {req['ManagerName']} will then approve it." if emp["NeedsApproval"] else "."),
@@ -582,42 +646,68 @@ def submit_travel():
 
 
 def notify_decision(r, new_status, comment):
-    """Step 3 - final emails to the employee and the Travel Desk (CC as configured).
-    On rejection the Travel Desk is told to cancel the tentative booking."""
+    """Step 3 - final emails, sent separately to the employee (EmpEmail) and the Travel Desk (CC as configured).
+    Approved: the employee gets the final booking (Property Name, Place/Area, Cost).
+    Rejected: the employee gets the manager's reason; the Travel Desk is asked to cancel the tentative booking."""
     direct = not r.get("ManagerCode")
     approved = new_status == "Approved"
-    notes = ""
-    if comment and not direct:
-        label = "Manager comment" if approved else "Reason for rejection"
-        notes = f"<p><b>{label}:</b> {html.escape(comment)}</p>"
     who = f"{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])})"
     trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
+    dates = f"{fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}"
+    has_booking = bool(r.get("PropertyName"))
+    comment_box = reason_box_html("Manager comment", comment) if (approved and comment and not direct) else ""
 
     if approved:
         how = ("no manager approval was required (no reporting manager on record)" if direct
                else f"approved by {html.escape(r['ManagerName'])}")
-        desk_msg = (f"<p>The booking for {who} is <b>approved</b>: {how}. "
-                    "Please confirm the tickets and accommodation.</p>")
-        desk_subject = f"Approved: travel booking for {r['EmpName']} ({r['EmpCode']}) - {trip}"
-        emp_msg = ("<p>Your travel request has been <b>approved</b> and the Travel Desk has confirmed "
-                   "your booking.</p>")
-        emp_subject = "Travel request approved"
+        emp_subject = with_ref(r, f"Your trip to {r['PlaceTo']} is approved")
+        emp_body = email_html(
+            ref_badge_html(r),
+            f"<p>Dear {html.escape(r['EmpName'])},</p>",
+            f"<p>Your trip from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} ({dates}) "
+            "is <b>approved</b>." + (" Here is your final booking:" if has_booking else "") + "</p>",
+            booking_box_html(r, "Your booking") if has_booking else "",
+            comment_box,
+            details_table_html(r, booking=False),
+        )
+        desk_subject = with_ref(r, f"Approved: travel booking for {r['EmpName']} ({r['EmpCode']}) - {trip}")
+        desk_body = email_html(
+            ref_badge_html(r),
+            "<p>Dear Sagar, Jigna and Mittal,</p>",
+            f"<p>The booking for {who} is <b>approved</b>: {how}. Please confirm the tickets and accommodation.</p>",
+            booking_box_html(r) if has_booking else "",
+            comment_box,
+            details_table_html(r, booking=False),
+        )
     else:
-        desk_msg = (f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
-                    "<b>Please cancel the tentative tickets and accommodation.</b></p>")
-        desk_subject = f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}"
-        emp_msg = (f"<p>Your travel request has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
-                   "The Travel Desk will cancel the tentative booking.</p>")
-        emp_subject = "Travel request rejected"
+        emp_subject = with_ref(r, "Your travel request was rejected")
+        emp_body = email_html(
+            ref_badge_html(r),
+            f"<p>Dear {html.escape(r['EmpName'])},</p>",
+            f"<p>Your travel request from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} ({dates}) "
+            f"has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+            "The Travel Desk will cancel the tentative booking.</p>",
+            reason_box_html("Reason for rejection", comment or "-"),
+            details_table_html(r, booking=False),
+        )
+        desk_subject = with_ref(r, f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}")
+        desk_body = email_html(
+            ref_badge_html(r),
+            "<p>Dear Sagar, Jigna and Mittal,</p>",
+            f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+            "<b>Please cancel the tentative tickets and accommodation below.</b></p>",
+            reason_box_html("Reason for rejection", comment or "-"),
+            booking_box_html(r, "Booking to cancel") if has_booking else "",
+            details_table_html(r, booking=False),
+        )
 
     errors = []
     for to, cc, subject, body in (
-        ([r["EmpEmail"]], None, emp_subject, f"<p>Dear {html.escape(r['EmpName'])},</p>" + emp_msg),
-        (TRAVEL_DESK_TO, TRAVEL_DESK_CC, desk_subject, "<p>Dear Sagar, Jigna and Mittal,</p>" + desk_msg),
+        ([r["EmpEmail"]], None, emp_subject, emp_body),  # always straight to the employee
+        (TRAVEL_DESK_TO, TRAVEL_DESK_CC, desk_subject, desk_body),
     ):
         try:
-            send_mail(to, subject,
-                      f"<div style='{EMAIL_FONT}'>" + body + details_table_html(r) + notes + "</div>", cc=cc)
+            send_mail(to, subject, body, cc=cc)
         except Exception as exc:  # noqa: BLE001 - still try the other recipient
             errors.append(exc)
     if errors:
@@ -706,7 +796,7 @@ def travel_desk_confirm(request_id):
 
     try:
         send_mail([r["ManagerEmail"]],
-                  f"Approval required: travel booking for {r['EmpName']} ({r['EmpCode']})",
+                  with_ref(r, f"Approval required: travel booking for {r['EmpName']} ({r['EmpCode']})"),
                   manager_email_html(r))
     except Exception:  # noqa: BLE001
         log.exception("Failed to email the manager for %s", request_id)

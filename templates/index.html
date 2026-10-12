@@ -212,7 +212,7 @@
         </div>
         <div id="summaryList"></div>
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-4 pt-3" style="border-top: 1px solid var(--hp-line)">
-          <span class="help m-0">Reference: <span id="refId"></span></span>
+          <span class="help m-0">Booking Ref: <span id="refId" style="font-weight:700;color:var(--hp-maroon)"></span></span>
           <button class="btn btn-hp" id="newRequestBtn"><i class="fas fa-plus me-1"></i> New request</button>
         </div>
       </div>
@@ -379,7 +379,7 @@
           ];
           $('summaryList').innerHTML = rows.map(r => `<div class="summary-row"><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join('');
           $('successMsg').textContent = data.message;
-          $('refId').textContent = data.requestId;
+          $('refId').textContent = data.bookingRef || data.requestId;
           const badge = $('successBadge');
           badge.className = 'pill pill-pending';
           badge.innerHTML = '<i class="fas fa-ticket"></i> With Travel Desk';
