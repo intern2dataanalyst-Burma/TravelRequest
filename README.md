@@ -7,7 +7,7 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
 ## How it works
 
 1. **Employee submits** the form. Name, designation and department come from `tblEmployeeMaster`; the manager from `dbo.checklist_empmanager_mapping`. Status: `Pending Booking`.
-2. **Travel Desk books.** The Travel Desk (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with a **Booking Arranged - Send to Manager** button. Confirming on the portal sets `Pending Manager Approval` and emails the manager.
+2. **Travel Desk books.** The Travel Desk (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with a **Booking Arranged - Send to Manager** button. It opens a form where they enter Place/Area, Property Name and Cost; submitting sets `Pending Manager Approval` and emails the manager the booking.
 3. **Manager approves.** The manager's email has **Approve** and **Reject** buttons that open a review page on the portal. A reason is required to reject.
 4. **Final emails** go to the employee and the Travel Desk: `Approved`, or `Rejected` with the reason (the Travel Desk is asked to cancel the tentative booking).
 
@@ -15,7 +15,9 @@ Employees with no reporting manager on record skip step 3: the Travel Desk's con
 
 All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Messages). The links are signed with `SECRET_KEY` (separately for the Travel Desk and the manager) and expire after `REVIEW_LINK_MAX_AGE_DAYS` (30 by default). Opening a link changes nothing; the action is recorded only when the page is submitted. Links work only from the office network or VPN.
 
-Database: run `deploy/migrate_001_status_length.sql` once (widens `TravelRequests.Status` to `nvarchar(30)`). Already applied on MingalabaDB on 2026-10-12.
+Database migrations (run once each, in order; both already applied on MingalabaDB on 2026-10-12):
+- `deploy/migrate_001_status_length.sql` widens `TravelRequests.Status` to `nvarchar(30)`.
+- `deploy/migrate_002_booking_details.sql` adds `BookingArea`, `PropertyName` and `Cost` (the Travel Desk's booking details).
 
 ## Deploy on 10.10.30.90
 
