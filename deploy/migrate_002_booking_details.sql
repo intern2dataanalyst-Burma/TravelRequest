@@ -12,6 +12,6 @@ GO
 IF COL_LENGTH('dbo.TravelRequests', 'PropertyName') IS NULL
     ALTER TABLE dbo.TravelRequests ADD PropertyName nvarchar(200) NULL;     -- e.g. The Leela Palace
 GO
-IF COL_LENGTH('dbo.TravelRequests', 'EstimatedPrice') IS NULL
-    ALTER TABLE dbo.TravelRequests ADD EstimatedPrice decimal(12, 2) NULL;  -- in INR
+IF COL_LENGTH('dbo.TravelRequests', 'Cost') IS NULL
+    ALTER TABLE dbo.TravelRequests ADD Cost decimal(12, 2) NULL;            -- final booked price, INR
 GO

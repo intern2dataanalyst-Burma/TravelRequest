@@ -240,7 +240,7 @@ def save_booking(request_id, area, property_name, price, to_status, comment=None
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE TravelRequests SET BookingArea = ?, PropertyName = ?, EstimatedPrice = ?, Status = ?"
+            "UPDATE TravelRequests SET BookingArea = ?, PropertyName = ?, Cost = ?, Status = ?"
             + (", ActionedAt = SYSUTCDATETIME(), ActionComment = ?" if approved else "")
             + " WHERE RequestId = ? AND Status = ?",
             area, property_name, price, to_status, *([comment] if approved else []), request_id, STATUS_BOOKING,
@@ -360,7 +360,7 @@ def booking_rows(r):
     return [
         ("Place/Area", r.get("BookingArea") or "-"),
         ("Property Name", r.get("PropertyName") or "-"),
-        ("Estimated Price", fmt_inr(r["EstimatedPrice"]) if r.get("EstimatedPrice") is not None else "-"),
+        ("Cost", fmt_inr(r["Cost"]) if r.get("Cost") is not None else "-"),
     ]
 
 
@@ -640,7 +640,7 @@ def parse_booking(form):
     """Validate the Travel Desk form. Returns (values, errors) - all three fields are required."""
     area = form.get("booking_area", "").strip()[:150]
     prop = form.get("property_name", "").strip()[:200]
-    raw_price = form.get("estimated_price", "").replace(",", "").replace("₹", "").strip()
+    raw_price = form.get("cost", "").replace(",", "").replace("₹", "").strip()
     errors = {}
     if not area:
         errors["booking_area"] = "Enter the place/area of the stay."
@@ -652,9 +652,9 @@ def parse_booking(form):
         if not (Decimal("0") < price < Decimal("10000000000")):
             raise InvalidOperation
     except (InvalidOperation, ValueError):
-        errors["estimated_price"] = "Enter the estimated price as a number, e.g. 12500."
+        errors["cost"] = "Enter the cost as a number, e.g. 12500."
         price = None
-    return {"booking_area": area, "property_name": prop, "estimated_price": raw_price, "price": price}, errors
+    return {"booking_area": area, "property_name": prop, "cost": raw_price, "price": price}, errors
 
 
 @app.get("/desk/<request_id>")
@@ -676,7 +676,7 @@ def travel_desk_confirm(request_id):
         abort(404)
     page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL,
                 values={"booking_area": r.get("BookingArea") or "", "property_name": r.get("PropertyName") or "",
-                        "estimated_price": f"{r['EstimatedPrice']:.2f}" if r.get("EstimatedPrice") is not None else ""},
+                        "cost": f"{r['Cost']:.2f}" if r.get("Cost") is not None else ""},
                 errors={})
 
     if r["Status"] != STATUS_BOOKING:

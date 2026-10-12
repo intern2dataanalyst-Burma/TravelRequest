@@ -96,13 +96,13 @@
           <div class="invalid-feedback">{{ errors.property_name or 'Enter the property name.' }}</div>
         </div>
         <div class="col-md-6">
-          <label for="estimated_price" class="form-label">Estimated Price<span class="req">*</span></label>
+          <label for="cost" class="form-label">Cost<span class="req">*</span></label>
           <div class="input-group has-validation">
             <span class="input-group-text">&#8377;</span>
-            <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors.estimated_price }}" id="estimated_price"
-                   name="estimated_price" maxlength="16" placeholder="e.g. 12500" value="{{ values.estimated_price }}"
+            <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors.cost }}" id="cost"
+                   name="cost" maxlength="16" placeholder="e.g. 12500" value="{{ values.cost }}"
                    pattern="[0-9,]+(\.[0-9]{1,2})?" required>
-            <div class="invalid-feedback">{{ errors.estimated_price or 'Enter the estimated price as a number, e.g. 12500.' }}</div>
+            <div class="invalid-feedback">{{ errors.cost or 'Enter the cost as a number, e.g. 12500.' }}</div>
           </div>
         </div>
       </div>
