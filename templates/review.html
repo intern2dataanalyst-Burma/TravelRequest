@@ -70,6 +70,15 @@
       </div></div>
     {% endif %}
 
+    {% if r.PropertyName %}
+    <div class="hp-card hp-card-pad mb-3" style="border-left: 4px solid var(--hp-terracotta)">
+      <h2 class="card-title">Booking arranged by the Travel Desk</h2>
+      {% for label, value in booking_rows(r) %}
+        <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     <div class="hp-card hp-card-pad mb-3">
       <h2 class="card-title">Trip details</h2>
       {% for label, value in [

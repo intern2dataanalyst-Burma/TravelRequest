@@ -9,12 +9,13 @@ import re
 import secrets
 import uuid
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 
 import msal
 import pyodbc
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
@@ -231,6 +232,24 @@ def advance_status(request_id, from_status, to_status):
         return won
 
 
+def save_booking(request_id, area, property_name, price, to_status, comment=None):
+    """Store the Travel Desk's booking details and move Pending Booking -> to_status in one atomic update.
+    to_status is Pending Manager Approval, or Approved when there is no reporting manager.
+    Returns True if this call won."""
+    approved = to_status == "Approved"
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE TravelRequests SET BookingArea = ?, PropertyName = ?, EstimatedPrice = ?, Status = ?"
+            + (", ActionedAt = SYSUTCDATETIME(), ActionComment = ?" if approved else "")
+            + " WHERE RequestId = ? AND Status = ?",
+            area, property_name, price, to_status, *([comment] if approved else []), request_id, STATUS_BOOKING,
+        )
+        won = cur.rowcount == 1
+        conn.commit()
+        return won
+
+
 def claim_decision(request_id, status, comment, from_status=None):
     """Atomically move a request awaiting a decision to Approved/Rejected. Returns True if this call won."""
     with get_conn() as conn:
@@ -295,7 +314,7 @@ def fmt_date(d):
     return str(d)
 
 
-def details_table_html(r):
+def details_table_html(r, booking=True):
     rows = [
         ("Emp Code", r["EmpCode"]),
         ("Name", r["EmpName"]),
@@ -314,7 +333,35 @@ def details_table_html(r):
         f"<td style='padding:4px 0'>{html.escape(str(v))}</td></tr>"
         for k, v in rows
     )
+    if booking and r.get("PropertyName"):  # filled in by the Travel Desk at step 2
+        body += (
+            "<tr><td colspan='2' style='padding:14px 0 4px;font-weight:700;color:#681313'>Booking arranged by the "
+            "Travel Desk</td></tr>"
+            + "".join(
+                f"<tr><td style='padding:4px 12px 4px 0;font-weight:600'>{html.escape(k)}</td>"
+                f"<td style='padding:4px 0;font-weight:600;color:#1d1d1d'>{html.escape(v)}</td></tr>"
+                for k, v in booking_rows(r))
+        )
     return f"<table style='font-family:Segoe UI,Arial,sans-serif;font-size:14px'>{body}</table>"
+
+
+def fmt_inr(amount):
+    """Indian digit grouping: 123456.5 -> '₹1,23,456.50'."""
+    whole, frac = f"{Decimal(amount):.2f}".split(".")
+    head, tail = whole[:-3], whole[-3:]
+    while len(head) > 2:
+        tail = head[-2:] + "," + tail
+        head = head[:-2]
+    return "₹" + (head + "," + tail if head else tail) + "." + frac
+
+
+def booking_rows(r):
+    """The Travel Desk's booking details as (label, value) pairs."""
+    return [
+        ("Place/Area", r.get("BookingArea") or "-"),
+        ("Property Name", r.get("PropertyName") or "-"),
+        ("Estimated Price", fmt_inr(r["EstimatedPrice"]) if r.get("EstimatedPrice") is not None else "-"),
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -333,7 +380,7 @@ def check_token(signer, request_id, token):
 
 
 def desk_url(request_id):
-    return f"{APP_BASE_URL}/desk/{request_id}?t={make_token(_desk_signer, request_id)}"
+    return f"{APP_BASE_URL}/travel-desk-confirm/{request_id}?t={make_token(_desk_signer, request_id)}"
 
 
 def review_url(request_id, decision):
@@ -362,7 +409,7 @@ def desk_email_html(r):
             "for approval.")
     label = "Booking Arranged - Confirm" if direct else "Booking Arranged - Send to Manager"
     return (
-        f"<div style='{EMAIL_FONT}'><p>Dear Jigna, Mittal and Sagar,</p>"
+        f"<div style='{EMAIL_FONT}'><p>Dear Sagar, Jigna and Mittal,</p>"
         f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a travel request. "
         f"Please arrange tickets and accommodation. {then}</p>"
         + details_table_html(r)
@@ -379,7 +426,13 @@ def manager_email_html(r):
         f"<p>The Travel Desk has arranged tickets and accommodation for {html.escape(r['EmpName'])} "
         f"({html.escape(r['EmpCode'])}). Please review and approve or reject the booking. "
         "A reason is required to reject.</p>"
-        + details_table_html(r)
+        "<table style='border-collapse:collapse;margin:4px 0 16px;background:#fbf6e6;border-left:4px solid #c54b36'>"
+        + "".join(
+            f"<tr><td style='padding:6px 16px 6px 12px;color:#7a6f66;font-size:13px'>{html.escape(k)}</td>"
+            f"<td style='padding:6px 12px 6px 0;font-weight:700;font-size:15px;color:#1d1d1d'>{html.escape(v)}</td></tr>"
+            for k, v in booking_rows(r))
+        + "</table>"
+        + details_table_html(r, booking=False)
         + "<p style='margin:20px 0'>"
         + _email_button("Approve", review_url(rid, "approve"), "#7f8e28")
         + _email_button("Reject", review_url(rid, "reject"), "#c54b36")
@@ -390,8 +443,8 @@ def manager_email_html(r):
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
-# /desk/ and /review/ links carry their own signed token; /healthz is for monitoring; /static/ is the logo
-_OPEN_PREFIXES = ("/desk/", "/review/", "/healthz", "/static/")
+# Travel Desk and manager links carry their own signed token; /healthz is for monitoring; /static/ is the logo
+_OPEN_PREFIXES = ("/travel-desk-confirm/", "/desk/", "/review/", "/healthz", "/static/")
 
 
 @app.before_request
@@ -560,7 +613,7 @@ def notify_decision(r, new_status, comment):
     errors = []
     for to, cc, subject, body in (
         ([r["EmpEmail"]], None, emp_subject, f"<p>Dear {html.escape(r['EmpName'])},</p>" + emp_msg),
-        (TRAVEL_DESK_TO, TRAVEL_DESK_CC, desk_subject, "<p>Dear Jigna, Mittal and Sagar,</p>" + desk_msg),
+        (TRAVEL_DESK_TO, TRAVEL_DESK_CC, desk_subject, "<p>Dear Sagar, Jigna and Mittal,</p>" + desk_msg),
     ):
         try:
             send_mail(to, subject,
@@ -583,49 +636,85 @@ def _check_link(signer, request_id, template):
     return token, None
 
 
-@app.route("/desk/<request_id>", methods=["GET", "POST"])
-def desk(request_id):
-    """Step 1 - Travel Desk confirms the booking is arranged. GET only shows the page; POST acts."""
-    token, err = _check_link(_desk_signer, request_id, "desk.html")
+def parse_booking(form):
+    """Validate the Travel Desk form. Returns (values, errors) - all three fields are required."""
+    area = form.get("booking_area", "").strip()[:150]
+    prop = form.get("property_name", "").strip()[:200]
+    raw_price = form.get("estimated_price", "").replace(",", "").replace("₹", "").strip()
+    errors = {}
+    if not area:
+        errors["booking_area"] = "Enter the place/area of the stay."
+    if not prop:
+        errors["property_name"] = "Enter the property name."
+    price = None
+    try:
+        price = Decimal(raw_price).quantize(Decimal("0.01"))
+        if not (Decimal("0") < price < Decimal("10000000000")):
+            raise InvalidOperation
+    except (InvalidOperation, ValueError):
+        errors["estimated_price"] = "Enter the estimated price as a number, e.g. 12500."
+        price = None
+    return {"booking_area": area, "property_name": prop, "estimated_price": raw_price, "price": price}, errors
+
+
+@app.get("/desk/<request_id>")
+def desk_legacy(request_id):
+    """Links in emails sent before the booking-details form was added."""
+    return redirect(url_for("travel_desk_confirm", request_id=request_id, t=request.args.get("t", "")), 301)
+
+
+@app.route("/travel-desk-confirm/<request_id>", methods=["GET", "POST"])
+def travel_desk_confirm(request_id):
+    """Step 1 - the Travel Desk enters the booking (place/area, property, price) and sends it to the manager.
+    GET only shows the form (safe for mail link scanners); POST saves and emails the manager."""
+    template = "travel_desk_confirm.html"
+    token, err = _check_link(_desk_signer, request_id, template)
     if err:
         return err
     r = load_request(request_id)
     if not r:
         abort(404)
-    page = dict(r=r, token=token, fmt_date=fmt_date, logo_url=LOGO_URL)
+    page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL,
+                values={"booking_area": r.get("BookingArea") or "", "property_name": r.get("PropertyName") or "",
+                        "estimated_price": f"{r['EstimatedPrice']:.2f}" if r.get("EstimatedPrice") is not None else ""},
+                errors={})
 
     if r["Status"] != STATUS_BOOKING:
-        return render_template("desk.html", state="already", **page)
+        return render_template(template, state="already", **page)
     if request.method == "GET":
-        return render_template("desk.html", state="pending", **page)
+        return render_template(template, state="pending", **page)
 
-    if not r.get("ManagerCode"):
-        # No reporting manager (HOD / senior staff): booking confirmed = approved
-        if not claim_decision(request_id, "Approved", DIRECT_NOTE, from_status=STATUS_BOOKING):
-            page["r"] = load_request(request_id)
-            return render_template("desk.html", state="already", **page)
+    values, errors = parse_booking(request.form)
+    page.update(values=values, errors=errors)
+    if errors:
+        return render_template(template, state="pending", **page), 400
+
+    direct = not r.get("ManagerCode")  # no reporting manager (HOD / senior staff): booking confirmed = approved
+    to_status = "Approved" if direct else STATUS_MANAGER
+    if not save_booking(request_id, values["booking_area"], values["property_name"], values["price"],
+                        to_status, comment=DIRECT_NOTE if direct else None):
+        page["r"] = load_request(request_id)
+        return render_template(template, state="already", **page)
+    r = page["r"] = load_request(request_id)  # now includes the booking details
+
+    if direct:
         try:
             notify_decision(r, "Approved", "")
         except Exception:  # noqa: BLE001
             log.exception("Final emails failed for %s", request_id)
-        page["r"] = load_request(request_id)
-        return render_template("desk.html", state="done", **page)
+        return render_template(template, state="done", **page)
 
-    if not advance_status(request_id, STATUS_BOOKING, STATUS_MANAGER):
-        page["r"] = load_request(request_id)
-        return render_template("desk.html", state="already", **page)
     try:
         send_mail([r["ManagerEmail"]],
                   f"Approval required: travel booking for {r['EmpName']} ({r['EmpCode']})",
                   manager_email_html(r))
     except Exception:  # noqa: BLE001
         log.exception("Failed to email the manager for %s", request_id)
-        advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # let the Travel Desk retry
-        return render_template("desk.html", state="pending", error=(
-            "The booking could not be sent to the manager because the email failed. Please try again."),
-            **page), 502
-    page["r"] = load_request(request_id)
-    return render_template("desk.html", state="done", **page)
+        advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # details stay saved; the desk can retry
+        page["r"] = load_request(request_id)
+        return render_template(template, state="pending", error=(
+            "The booking was saved but could not be emailed to the manager. Please submit again."), **page), 502
+    return render_template(template, state="done", **page)
 
 
 @app.route("/review/<request_id>", methods=["GET", "POST"])
@@ -637,7 +726,7 @@ def review(request_id):
     r = load_request(request_id)  # trust the DB record only
     if not r:
         abort(404)
-    page = dict(r=r, token=token, fmt_date=fmt_date, logo_url=LOGO_URL)
+    page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL)
 
     if request.method == "GET":
         if r["Status"] != STATUS_MANAGER:

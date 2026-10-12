@@ -18,6 +18,7 @@
     .summary-row:last-child { border-bottom: 0; }
     .summary-row span:first-child { color: var(--hp-muted); white-space: nowrap; }
     .summary-row span:last-child { font-weight: 600; color: var(--hp-ink); text-align: right; }
+    .input-group-text { background: var(--hp-tint); border-color: var(--hp-line-strong); color: var(--hp-muted); font-weight: 600; border-radius: 10px 0 0 10px; }
   </style>
 </head>
 <body>
@@ -44,19 +45,19 @@
     {% if state == 'done' %}
       <div class="notice notice-ok mb-3"><i class="fas fa-circle-check"></i><div>
         {% if direct %}
-          Booking confirmed. The request is <strong>approved</strong> (no reporting manager on record), and the employee has been notified.
+          Booking saved. The request is <strong>approved</strong> (no reporting manager on record), and the employee has been notified.
         {% else %}
-          Booking sent to <strong>{{ r.ManagerName }}</strong> for approval. You will get an email once they approve or reject it.
+          Booking saved and sent to <strong>{{ r.ManagerName }}</strong> for approval. You will get an email once they approve or reject it.
         {% endif %}
       </div></div>
     {% elif state == 'already' %}
       <div class="notice notice-info mb-3"><i class="fas fa-circle-info"></i><div>
-        This booking has already been actioned. Current status: <strong>{{ r.Status }}</strong>. No further action is needed.
+        This booking has already been sent. Current status: <strong>{{ r.Status }}</strong>. No further action is needed.
       </div></div>
     {% endif %}
 
     <div class="hp-card hp-card-pad mb-3">
-      <h2 class="card-title">Trip details</h2>
+      <h2 class="card-title">Request details</h2>
       {% for label, value in [
           ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
@@ -67,24 +68,65 @@
       {% endfor %}
     </div>
 
+    {% if state != 'pending' and r.PropertyName %}
+    <div class="hp-card hp-card-pad mb-3">
+      <h2 class="card-title">Booking details</h2>
+      {% for label, value in booking_rows(r) %}
+        <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     {% if state == 'pending' %}
-    <form method="post" class="hp-card hp-card-pad">
-      <h2 class="card-title">Booking arranged?</h2>
+    <form method="post" class="hp-card hp-card-pad" novalidate>
+      <h2 class="card-title">Booking details</h2>
       {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
-      <p style="color: var(--hp-muted)" class="mb-3">
+      <input type="hidden" name="t" value="{{ token }}">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label for="booking_area" class="form-label">Place/Area<span class="req">*</span></label>
+          <input type="text" class="form-control {{ 'is-invalid' if errors.booking_area }}" id="booking_area" name="booking_area"
+                 maxlength="150" placeholder="e.g. Indiranagar" value="{{ values.booking_area }}" required>
+          <div class="invalid-feedback">{{ errors.booking_area or 'Enter the place/area of the stay.' }}</div>
+        </div>
+        <div class="col-md-6">
+          <label for="property_name" class="form-label">Property Name<span class="req">*</span></label>
+          <input type="text" class="form-control {{ 'is-invalid' if errors.property_name }}" id="property_name" name="property_name"
+                 maxlength="200" placeholder="e.g. The Leela Palace" value="{{ values.property_name }}" required>
+          <div class="invalid-feedback">{{ errors.property_name or 'Enter the property name.' }}</div>
+        </div>
+        <div class="col-md-6">
+          <label for="estimated_price" class="form-label">Estimated Price<span class="req">*</span></label>
+          <div class="input-group has-validation">
+            <span class="input-group-text">&#8377;</span>
+            <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors.estimated_price }}" id="estimated_price"
+                   name="estimated_price" maxlength="16" placeholder="e.g. 12500" value="{{ values.estimated_price }}"
+                   pattern="[0-9,]+(\.[0-9]{1,2})?" required>
+            <div class="invalid-feedback">{{ errors.estimated_price or 'Enter the estimated price as a number, e.g. 12500.' }}</div>
+          </div>
+        </div>
+      </div>
+      <p class="help mt-3 mb-0">
         {% if direct %}
-          Confirm once tickets and accommodation are arranged. This employee has no reporting manager on record, so confirming approves the request and notifies them.
+          This employee has no reporting manager on record, so submitting approves the request and notifies them.
         {% else %}
-          Confirm once tentative tickets and accommodation are arranged. The booking will be emailed to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong> to approve or reject.
+          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong> to approve or reject.
         {% endif %}
       </p>
-      <input type="hidden" name="t" value="{{ token }}">
-      <div class="d-flex justify-content-end pt-3" style="border-top: 1px solid var(--hp-line)">
+      <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
         <button type="submit" class="btn btn-hp">
           {{ 'Booking Arranged - Confirm' if direct else 'Booking Arranged - Send to Manager' }} <i class="fas fa-arrow-right ms-1"></i>
         </button>
       </div>
     </form>
+    <script>
+      // Client-side check mirrors the server's: all three fields required, price must be a number
+      document.querySelector('form').addEventListener('submit', (e) => {
+        const f = e.target;
+        f.classList.add('was-validated');
+        if (!f.checkValidity()) { e.preventDefault(); f.querySelector(':invalid')?.focus(); }
+      });
+    </script>
     {% endif %}
   {% endif %}
   </main>
