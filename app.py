@@ -74,6 +74,11 @@ PORTAL_PASSWORD = os.environ.get("PORTAL_PASSWORD", "")
 LOGO_URL = os.environ.get("LOGO_URL", "")
 
 ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
+
+# Workflow: employee submits -> Travel Desk books -> manager approves/rejects
+STATUS_BOOKING = "Pending Booking"            # waiting for the Travel Desk to arrange the booking
+STATUS_MANAGER = "Pending Manager Approval"   # booking arranged, waiting for the manager
+DIRECT_NOTE = "No reporting manager on record: approved when the Travel Desk confirmed the booking"
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 
 app = Flask(__name__)
@@ -83,7 +88,9 @@ log = logging.getLogger("travel-portal")
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_urlsafe(32)
     log.warning("SECRET_KEY is not set: approval links will stop working when the server restarts")
+# Separate salts: a Travel Desk link can never be used as a manager approval link, and vice versa
 _review_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-review")
+_desk_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-desk")
 
 
 # --------------------------------------------------------------------------
@@ -183,13 +190,13 @@ def insert_request(req):
               (RequestId, EmpCode, EmpName, EmpEmail, ManagerCode, ManagerName, ManagerEmail,
                Designation, Department, FromDate, ToDate, PlaceFrom, PlaceTo,
                RoomCategory, PreferredLocation, ReasonOfTravel, Status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Pending')
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             req["RequestId"], req["EmpCode"], req["EmpName"], req["EmpEmail"],
             req["ManagerCode"], req["ManagerName"], req["ManagerEmail"],
             req["Designation"], req["Department"], req["FromDate"], req["ToDate"],
             req["PlaceFrom"], req["PlaceTo"], req["RoomCategory"], req["PreferredLocation"],
-            req["ReasonOfTravel"],
+            req["ReasonOfTravel"], STATUS_BOOKING,
         )
         conn.commit()
 
@@ -213,14 +220,26 @@ def load_request(request_id):
         return dict(zip(cols, row))
 
 
-def claim_decision(request_id, status, comment):
-    """Atomically move Pending -> Approved/Rejected. Returns True if this call won."""
+def advance_status(request_id, from_status, to_status):
+    """Atomically move a request from one status to the next. Returns True if this call won."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE TravelRequests SET Status = ? WHERE RequestId = ? AND Status = ?",
+                    to_status, request_id, from_status)
+        won = cur.rowcount == 1
+        conn.commit()
+        return won
+
+
+def claim_decision(request_id, status, comment, from_status=None):
+    """Atomically move a request awaiting a decision to Approved/Rejected. Returns True if this call won."""
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE TravelRequests SET Status = ?, ActionedAt = SYSUTCDATETIME(), ActionComment = ?, "
-            "RejectionReason = ? WHERE RequestId = ? AND Status = 'Pending'",
+            "RejectionReason = ? WHERE RequestId = ? AND Status = ?",
             status, comment, (comment if status == "Rejected" else None), request_id,
+            from_status or STATUS_MANAGER,
         )
         won = cur.rowcount == 1
         conn.commit()
@@ -299,54 +318,80 @@ def details_table_html(r):
 
 
 # --------------------------------------------------------------------------
-# Manager approval links (intranet)
+# Signed action links (intranet) and workflow emails - plain HTML, no Actionable Messages
 # --------------------------------------------------------------------------
-def make_review_token(request_id):
-    return _review_signer.dumps(str(request_id))
+def make_token(signer, request_id):
+    return signer.dumps(str(request_id))
 
 
-def check_review_token(request_id, token):
-    """True if the token was issued for this request and has not expired."""
+def check_token(signer, request_id, token):
+    """True if the token was issued by this signer for this request and has not expired."""
     try:
-        return _review_signer.loads(token, max_age=REVIEW_LINK_MAX_AGE) == str(request_id)
+        return signer.loads(token, max_age=REVIEW_LINK_MAX_AGE) == str(request_id)
     except (SignatureExpired, BadSignature):
         return False
 
 
+def desk_url(request_id):
+    return f"{APP_BASE_URL}/desk/{request_id}?t={make_token(_desk_signer, request_id)}"
+
+
 def review_url(request_id, decision):
-    return f"{APP_BASE_URL}/review/{request_id}?t={make_review_token(request_id)}&decision={decision}"
+    return f"{APP_BASE_URL}/review/{request_id}?t={make_token(_review_signer, request_id)}&decision={decision}"
+
+
+EMAIL_FONT = "font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1d1d1d"
+LINK_NOTE = ("<p style='color:#7a6f66;font-size:12px'>The button opens the Travel Portal on the office "
+             "network, where you confirm. It works only from the office network or VPN.</p>")
 
 
 def _email_button(label, url, color):
     return (
-        f"<a href='{html.escape(url)}' style='display:inline-block;padding:10px 26px;margin-right:10px;"
-        f"background:{color};color:#ffffff;text-decoration:none;font-weight:600;border-radius:6px;"
+        f"<a href='{html.escape(url)}' style='display:inline-block;padding:11px 24px;margin:0 10px 6px 0;"
+        f"background:{color};color:#ffffff;text-decoration:none;font-weight:600;border-radius:8px;"
         f"font-family:Segoe UI,Arial,sans-serif;font-size:14px'>{html.escape(label)}</a>"
     )
 
 
-def approval_email_html(r):
-    """Manager email: request details plus Approve / Reject links to the intranet review page."""
+def desk_email_html(r):
+    """Step 1 - Travel Desk: arrange the booking, then send it to the manager."""
+    direct = not r.get("ManagerCode")
+    then = ("This employee has <b>no reporting manager on record</b>, so confirming will approve the request."
+            if direct else
+            f"Once arranged, click the button to send the booking to <b>{html.escape(r['ManagerName'])}</b> "
+            "for approval.")
+    label = "Booking Arranged - Confirm" if direct else "Booking Arranged - Send to Manager"
+    return (
+        f"<div style='{EMAIL_FONT}'><p>Dear Jigna, Mittal and Sagar,</p>"
+        f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a travel request. "
+        f"Please arrange tickets and accommodation. {then}</p>"
+        + details_table_html(r)
+        + "<p style='margin:20px 0'>" + _email_button(label, desk_url(r["RequestId"]), "#c54b36") + "</p>"
+        + LINK_NOTE + "</div>"
+    )
+
+
+def manager_email_html(r):
+    """Step 2 - Manager: the Travel Desk has arranged the booking; approve or reject it."""
     rid = r["RequestId"]
     return (
-        "<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px'>"
-        f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has requested travel and "
-        "accommodation and needs your approval.</p>"
+        f"<div style='{EMAIL_FONT}'><p>Dear {html.escape(r['ManagerName'])},</p>"
+        f"<p>The Travel Desk has arranged tickets and accommodation for {html.escape(r['EmpName'])} "
+        f"({html.escape(r['EmpCode'])}). Please review and approve or reject the booking. "
+        "A reason is required to reject.</p>"
         + details_table_html(r)
         + "<p style='margin:20px 0'>"
-        + _email_button("Approve", review_url(rid, "approve"), "#16a34a")
-        + _email_button("Reject", review_url(rid, "reject"), "#dc2626")
-        + "</p><p style='color:#64748b;font-size:12px'>The buttons open the Travel Portal on the office "
-        "network, where you confirm your decision. A reason is required to reject. "
-        "They work only from the office network or VPN.</p></div>"
+        + _email_button("Approve", review_url(rid, "approve"), "#7f8e28")
+        + _email_button("Reject", review_url(rid, "reject"), "#c54b36")
+        + "</p>" + LINK_NOTE + "</div>"
     )
 
 
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
-# /review/ links carry their own signed token; /healthz is for monitoring; /static/ is the logo
-_OPEN_PREFIXES = ("/review/", "/healthz", "/static/")
+# /desk/ and /review/ links carry their own signed token; /healthz is for monitoring; /static/ is the logo
+_OPEN_PREFIXES = ("/desk/", "/review/", "/healthz", "/static/")
 
 
 @app.before_request
@@ -462,92 +507,140 @@ def submit_travel():
         log.exception("DB error during insert")
         return jsonify({"ok": False, "error": "Could not save the request."}), 500
 
-    if not emp["NeedsApproval"]:
-        # No reporting manager on record (HOD / senior staff): straight to the Travel Desk
-        claim_decision(req["RequestId"], "Approved", DIRECT_NOTE)
-        try:
-            notify_decision(load_request(req["RequestId"]), "Approved", "")
-        except Exception:  # noqa: BLE001
-            log.exception("Failed to email the Travel Desk")
-            set_status(req["RequestId"], "MailFailed")
-            return jsonify({"ok": False, "error": "Could not email the Travel Desk. Please contact support."}), 502
-        return jsonify({
-            "ok": True, "requestId": req["RequestId"], "needsApproval": False,
-            "message": "Request submitted and sent directly to the Travel Desk.",
-        })
-
     try:
         send_mail(
-            [req["ManagerEmail"]],
-            f"Approval required: Travel request for {req['EmpName']} ({req['EmpCode']})",
-            approval_email_html(req),
+            TRAVEL_DESK_TO,
+            f"Booking required: {req['EmpName']} ({req['EmpCode']}) - {req['PlaceFrom']} to {req['PlaceTo']}",
+            desk_email_html(req),
+            cc=TRAVEL_DESK_CC,
         )
     except Exception:  # noqa: BLE001
-        log.exception("Failed to send approval email")
+        log.exception("Failed to email the Travel Desk")
         set_status(req["RequestId"], "MailFailed")
-        return jsonify({"ok": False, "error": "Could not email your manager. Please contact support."}), 502
+        return jsonify({"ok": False, "error": "Could not email the Travel Desk. Please contact support."}), 502
 
     return jsonify({
         "ok": True,
         "requestId": req["RequestId"],
-        "needsApproval": True,
-        "message": f"Request submitted. Approval email sent to {req['ManagerName']}.",
+        "needsApproval": emp["NeedsApproval"],
+        "message": "Request submitted. The Travel Desk has been asked to arrange your booking"
+                   + (f"; {req['ManagerName']} will then approve it." if emp["NeedsApproval"] else "."),
     })
 
 
-DIRECT_NOTE = "No reporting manager on record: sent directly to the Travel Desk"
-
-
 def notify_decision(r, new_status, comment):
-    """Email the Travel Desk (on approval) and the employee after a decision.
-    Requests from employees with no reporting manager (ManagerCode empty) skip manager approval."""
+    """Step 3 - final emails to the employee and the Travel Desk (CC as configured).
+    On rejection the Travel Desk is told to cancel the tentative booking."""
     direct = not r.get("ManagerCode")
-    note_label = "Reason for rejection" if new_status == "Rejected" else "Manager comment"
-    notes = f"<p><b>{note_label}:</b> {html.escape(comment)}</p>" if comment else ""
-    if new_status == "Approved":
-        how = ("submitted by an employee with <b>no reporting manager on record</b> (HOD / senior staff), "
-               "so no manager approval was required" if direct
-               else f"<b>approved</b> by {html.escape(r['ManagerName'])}")
-        send_mail(
-            TRAVEL_DESK_TO,
-            f"Travel booking required: {r['EmpName']} ({r['EmpCode']}) - {r['PlaceFrom']} to {r['PlaceTo']}",
-            "<p style='font-family:Segoe UI,Arial,sans-serif'>Dear Jigna, Mittal and Sagar,</p>"
-            f"<p>The following travel request was {how}. "
-            "Please arrange ticketing and accommodation.</p>"
-            + details_table_html(r) + notes,
-            cc=TRAVEL_DESK_CC,
-        )
-        emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
-                   + ("sent to the Travel Desk.</p>" if direct
-                      else "<b>approved</b> and forwarded to the Travel Desk.</p>"))
-        subject = "Travel request sent to the Travel Desk" if direct else "Travel request approved"
+    approved = new_status == "Approved"
+    notes = ""
+    if comment and not direct:
+        label = "Manager comment" if approved else "Reason for rejection"
+        notes = f"<p><b>{label}:</b> {html.escape(comment)}</p>"
+    who = f"{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])})"
+    trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
+
+    if approved:
+        how = ("no manager approval was required (no reporting manager on record)" if direct
+               else f"approved by {html.escape(r['ManagerName'])}")
+        desk_msg = (f"<p>The booking for {who} is <b>approved</b>: {how}. "
+                    "Please confirm the tickets and accommodation.</p>")
+        desk_subject = f"Approved: travel booking for {r['EmpName']} ({r['EmpCode']}) - {trip}"
+        emp_msg = ("<p>Your travel request has been <b>approved</b> and the Travel Desk has confirmed "
+                   "your booking.</p>")
+        emp_subject = "Travel request approved"
     else:
-        emp_msg = (f"<p>Dear {html.escape(r['EmpName'])},</p><p>Your travel request has been "
-                   f"<b>rejected</b> by {html.escape(r['ManagerName'])}.</p>")
-        subject = "Travel request rejected"
-    send_mail([r["EmpEmail"]], subject,
-              "<div style='font-family:Segoe UI,Arial,sans-serif'>" + emp_msg
-              + details_table_html(r) + notes + "</div>")
+        desk_msg = (f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+                    "<b>Please cancel the tentative tickets and accommodation.</b></p>")
+        desk_subject = f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}"
+        emp_msg = (f"<p>Your travel request has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+                   "The Travel Desk will cancel the tentative booking.</p>")
+        emp_subject = "Travel request rejected"
+
+    errors = []
+    for to, cc, subject, body in (
+        ([r["EmpEmail"]], None, emp_subject, f"<p>Dear {html.escape(r['EmpName'])},</p>" + emp_msg),
+        (TRAVEL_DESK_TO, TRAVEL_DESK_CC, desk_subject, "<p>Dear Jigna, Mittal and Sagar,</p>" + desk_msg),
+    ):
+        try:
+            send_mail(to, subject,
+                      f"<div style='{EMAIL_FONT}'>" + body + details_table_html(r) + notes + "</div>", cc=cc)
+        except Exception as exc:  # noqa: BLE001 - still try the other recipient
+            errors.append(exc)
+    if errors:
+        raise errors[0]
 
 
-@app.route("/review/<request_id>", methods=["GET", "POST"])
-def review(request_id):
-    """Manager approval page. GET only shows the request (safe for mail link scanners); POST decides."""
+def _check_link(signer, request_id, template):
+    """Validate the request id and signed token. Returns (token, error_response or None)."""
     token = request.values.get("t", "")
     try:
         uuid.UUID(request_id)
     except ValueError:
         abort(404)
-    if not check_review_token(request_id, token):
-        return render_template("review.html", state="invalid", logo_url=LOGO_URL), 403
+    if not check_token(signer, request_id, token):
+        return token, (render_template(template, state="invalid", logo_url=LOGO_URL), 403)
+    return token, None
 
+
+@app.route("/desk/<request_id>", methods=["GET", "POST"])
+def desk(request_id):
+    """Step 1 - Travel Desk confirms the booking is arranged. GET only shows the page; POST acts."""
+    token, err = _check_link(_desk_signer, request_id, "desk.html")
+    if err:
+        return err
+    r = load_request(request_id)
+    if not r:
+        abort(404)
+    page = dict(r=r, token=token, fmt_date=fmt_date, logo_url=LOGO_URL)
+
+    if r["Status"] != STATUS_BOOKING:
+        return render_template("desk.html", state="already", **page)
+    if request.method == "GET":
+        return render_template("desk.html", state="pending", **page)
+
+    if not r.get("ManagerCode"):
+        # No reporting manager (HOD / senior staff): booking confirmed = approved
+        if not claim_decision(request_id, "Approved", DIRECT_NOTE, from_status=STATUS_BOOKING):
+            page["r"] = load_request(request_id)
+            return render_template("desk.html", state="already", **page)
+        try:
+            notify_decision(r, "Approved", "")
+        except Exception:  # noqa: BLE001
+            log.exception("Final emails failed for %s", request_id)
+        page["r"] = load_request(request_id)
+        return render_template("desk.html", state="done", **page)
+
+    if not advance_status(request_id, STATUS_BOOKING, STATUS_MANAGER):
+        page["r"] = load_request(request_id)
+        return render_template("desk.html", state="already", **page)
+    try:
+        send_mail([r["ManagerEmail"]],
+                  f"Approval required: travel booking for {r['EmpName']} ({r['EmpCode']})",
+                  manager_email_html(r))
+    except Exception:  # noqa: BLE001
+        log.exception("Failed to email the manager for %s", request_id)
+        advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # let the Travel Desk retry
+        return render_template("desk.html", state="pending", error=(
+            "The booking could not be sent to the manager because the email failed. Please try again."),
+            **page), 502
+    page["r"] = load_request(request_id)
+    return render_template("desk.html", state="done", **page)
+
+
+@app.route("/review/<request_id>", methods=["GET", "POST"])
+def review(request_id):
+    """Step 2 - manager approves or rejects the booking. GET only shows the page; POST decides."""
+    token, err = _check_link(_review_signer, request_id, "review.html")
+    if err:
+        return err
     r = load_request(request_id)  # trust the DB record only
     if not r:
         abort(404)
     page = dict(r=r, token=token, fmt_date=fmt_date, logo_url=LOGO_URL)
 
     if request.method == "GET":
-        if r["Status"] != "Pending":
+        if r["Status"] != STATUS_MANAGER:
             return render_template("review.html", state="already", **page)
         decision = request.args.get("decision", "")
         return render_template("review.html", state="pending", decision=decision, comment="", **page)
@@ -569,10 +662,9 @@ def review(request_id):
     try:
         notify_decision(r, new_status, comment)
     except Exception:  # noqa: BLE001
-        log.exception("Post-decision email failed for %s", request_id)
+        log.exception("Final emails failed for %s", request_id)
     page["r"] = load_request(request_id)
     return render_template("review.html", state="done", **page)
-
 
 if __name__ == "__main__":
     from waitress import serve

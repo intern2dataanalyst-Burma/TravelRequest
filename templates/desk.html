@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Travel Desk Booking | Hunger Pangs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  {% include "_brand.html" %}
+  <style>
+    .page { max-width: 760px; }
+    .card-title { font-size: 1.08rem; font-weight: 700; margin: 0 0 1rem; }
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--hp-line); font-size: .92rem; }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row span:first-child { color: var(--hp-muted); white-space: nowrap; }
+    .summary-row span:last-child { font-weight: 600; color: var(--hp-ink); text-align: right; }
+  </style>
+</head>
+<body>
+  {% set app_name = 'Travel Desk Booking' %}
+  {% include "_header.html" %}
+
+  <main class="page">
+
+  {% if state == 'invalid' %}
+    <div class="hp-card hp-card-pad text-center py-5">
+      <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
+      <h1 class="h4 fw-bold">This booking link is invalid or has expired</h1>
+      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new travel request.</p>
+    </div>
+
+  {% else %}
+    {% set direct = not r.ManagerCode %}
+    <div class="page-head">
+      <div class="eyebrow mb-2">Travel request &middot; {{ r.EmpCode }}</div>
+      <h1>{{ r.EmpName }}</h1>
+      <p>{{ r.Designation }}{% if r.Department %} &middot; {{ r.Department }}{% endif %}</p>
+    </div>
+
+    {% if state == 'done' %}
+      <div class="notice notice-ok mb-3"><i class="fas fa-circle-check"></i><div>
+        {% if direct %}
+          Booking confirmed. The request is <strong>approved</strong> (no reporting manager on record), and the employee has been notified.
+        {% else %}
+          Booking sent to <strong>{{ r.ManagerName }}</strong> for approval. You will get an email once they approve or reject it.
+        {% endif %}
+      </div></div>
+    {% elif state == 'already' %}
+      <div class="notice notice-info mb-3"><i class="fas fa-circle-info"></i><div>
+        This booking has already been actioned. Current status: <strong>{{ r.Status }}</strong>. No further action is needed.
+      </div></div>
+    {% endif %}
+
+    <div class="hp-card hp-card-pad mb-3">
+      <h2 class="card-title">Trip details</h2>
+      {% for label, value in [
+          ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
+          ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
+          ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
+          ('Preferred Location', r.PreferredLocation or '-'),
+          ('Approving manager', r.ManagerName or 'None (no reporting manager on record)')] %}
+        <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+
+    {% if state == 'pending' %}
+    <form method="post" class="hp-card hp-card-pad">
+      <h2 class="card-title">Booking arranged?</h2>
+      {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
+      <p style="color: var(--hp-muted)" class="mb-3">
+        {% if direct %}
+          Confirm once tickets and accommodation are arranged. This employee has no reporting manager on record, so confirming approves the request and notifies them.
+        {% else %}
+          Confirm once tentative tickets and accommodation are arranged. The booking will be emailed to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong> to approve or reject.
+        {% endif %}
+      </p>
+      <input type="hidden" name="t" value="{{ token }}">
+      <div class="d-flex justify-content-end pt-3" style="border-top: 1px solid var(--hp-line)">
+        <button type="submit" class="btn btn-hp">
+          {{ 'Booking Arranged - Confirm' if direct else 'Booking Arranged - Send to Manager' }} <i class="fas fa-arrow-right ms-1"></i>
+        </button>
+      </div>
+    </form>
+    {% endif %}
+  {% endif %}
+  </main>
+
+  <footer class="hp-footer"><div>Hunger Pangs &middot; Travel Accommodation Portal &middot; For internal use</div></footer>
+</body>
+</html>

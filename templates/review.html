@@ -54,13 +54,20 @@
         <i class="fas {{ 'fa-circle-info' if state == 'already' else 'fa-circle-check' if ok else 'fa-circle-xmark' }}"></i>
         <div>
           {% if state == 'done' %}
-            The request has been <strong>{{ r.Status | lower }}</strong>.
-            {{ 'The Travel Desk and the employee have been notified.' if ok else 'The employee has been notified.' }}
+            The booking has been <strong>{{ r.Status | lower }}</strong>.
+            {{ 'The employee and the Travel Desk have been notified.' if ok
+               else 'The employee has been notified, and the Travel Desk has been asked to cancel the tentative booking.' }}
           {% else %}
             This request was already <strong>{{ r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
           {% endif %}
         </div>
       </div>
+    {% endif %}
+
+    {% if state == 'pending' %}
+      <div class="notice notice-info mb-3"><i class="fas fa-ticket"></i><div>
+        The Travel Desk has arranged tickets and accommodation for this trip. Please approve or reject the booking.
+      </div></div>
     {% endif %}
 
     <div class="hp-card hp-card-pad mb-3">
@@ -79,7 +86,7 @@
 
     {% if state == 'pending' %}
     <form method="post" class="hp-card hp-card-pad" id="decisionForm">
-      <h2 class="card-title">Your decision</h2>
+      <h2 class="card-title">Your decision on the booking</h2>
       {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
       <input type="hidden" name="t" value="{{ token }}">
       <div class="row g-2 mb-3">

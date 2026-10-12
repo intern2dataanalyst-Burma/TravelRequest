@@ -162,7 +162,7 @@
 
           <div class="form-actions">
             <button type="button" class="btn btn-hp-ghost" id="resetBtn">Reset</button>
-            <button type="submit" class="btn btn-hp" id="submitBtn"><span id="submitLabel">Submit for approval</span> <i class="fas fa-arrow-right ms-1"></i></button>
+            <button type="submit" class="btn btn-hp" id="submitBtn"><span id="submitLabel">Submit to Travel Desk</span> <i class="fas fa-arrow-right ms-1"></i></button>
           </div>
         </form>
 
@@ -173,15 +173,15 @@
             <ol class="route">
               <li>
                 <div class="route-dot" id="dotYou"><i class="fas fa-user"></i></div>
-                <div><div class="route-role">Requester</div><div class="route-name" id="routeYou">You</div></div>
-              </li>
-              <li id="routeMgrStep">
-                <div class="route-dot" id="dotMgr"><i class="fas fa-user-check"></i></div>
-                <div><div class="route-role">Approving manager</div><div class="route-name" id="routeMgr">Your reporting manager</div><div class="route-sub" id="routeMgrSub">Shown after your Emp Code is verified</div></div>
+                <div><div class="route-role">Step 1 &middot; Requester</div><div class="route-name" id="routeYou">You</div></div>
               </li>
               <li>
                 <div class="route-dot desk"><i class="fas fa-ticket"></i></div>
-                <div><div class="route-role">Booking</div><div class="route-name">Travel Desk</div><div class="route-sub">Books tickets and stay, then confirms by email</div></div>
+                <div><div class="route-role">Step 2 &middot; Travel Desk</div><div class="route-name">Travel Desk</div><div class="route-sub">Books tickets and stay</div></div>
+              </li>
+              <li id="routeMgrStep">
+                <div class="route-dot" id="dotMgr"><i class="fas fa-user-check"></i></div>
+                <div><div class="route-role">Step 3 &middot; Manager Approval</div><div class="route-name" id="routeMgr">Your reporting manager</div><div class="route-sub" id="routeMgrSub">Reviews and approves the booking</div></div>
               </li>
             </ol>
           </div>
@@ -255,15 +255,15 @@
       if (state === 'manager') {
         dot.className = 'route-dot on'; dot.textContent = initials(data.managerName);
         $('routeMgr').textContent = data.managerName;
-        $('routeMgrSub').textContent = data.managerDesignation || 'Approves from the email link';
+        $('routeMgrSub').textContent = 'Reviews and approves the booking' + (data.managerDesignation ? ' · ' + data.managerDesignation : '');
       } else if (state === 'direct') {
         dot.className = 'route-dot'; dot.innerHTML = '<i class="fas fa-forward"></i>';
         $('routeMgr').textContent = 'Not required';
-        $('routeMgrSub').textContent = 'No reporting manager on record, so your request goes straight to the Travel Desk.';
+        $('routeMgrSub').textContent = 'No reporting manager on record, so the request is approved once the Travel Desk confirms the booking.';
       } else {
         dot.className = 'route-dot'; dot.innerHTML = '<i class="fas fa-user-check"></i>';
         $('routeMgr').textContent = 'Your reporting manager';
-        $('routeMgrSub').textContent = 'Shown after your Emp Code is verified';
+        $('routeMgrSub').textContent = 'Reviews and approves the booking';
       }
       if (state === 'problem') $('routeProblemText').textContent = data.problem;
     }
@@ -272,7 +272,6 @@
       empValid = false; needsApproval = true; lastLookup = '';
       hrFields.forEach(id => setHrField(id, ''));
       setRoute('empty');
-      $('submitLabel').textContent = 'Submit for approval';
     }
 
     async function lookupEmployee() {
@@ -300,7 +299,6 @@
           }
           empValid = true;
           setRoute(needsApproval ? 'manager' : 'direct', data);
-          $('submitLabel').textContent = needsApproval ? 'Submit for approval' : 'Submit to Travel Desk';
           empInput.classList.remove('is-invalid'); empInput.classList.add('is-valid');
           note.innerHTML = '<span class="verified"><i class="fas fa-circle-check me-1"></i>Verified</span>'
             + (needsApproval ? ` &middot; Approver: ${esc(data.managerName)}` : ' &middot; No approval needed');
@@ -383,8 +381,8 @@
           $('successMsg').textContent = data.message;
           $('refId').textContent = data.requestId;
           const badge = $('successBadge');
-          badge.className = 'pill ' + (data.needsApproval ? 'pill-pending' : 'pill-ok');
-          badge.innerHTML = data.needsApproval ? '<i class="fas fa-hourglass-half"></i> Awaiting approval' : '<i class="fas fa-ticket"></i> With Travel Desk';
+          badge.className = 'pill pill-pending';
+          badge.innerHTML = '<i class="fas fa-ticket"></i> With Travel Desk';
           $('formView').classList.add('d-none');
           $('successView').classList.remove('d-none');
           window.scrollTo({ top: 0, behavior: 'smooth' });
