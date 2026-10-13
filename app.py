@@ -3,11 +3,14 @@ Travel Accommodation Portal (internal network)
 Flask + pyodbc (SQL Server) + MSAL/Microsoft Graph mail + signed approval links
 """
 import html
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
+import threading
+import time
 import uuid
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -16,7 +19,8 @@ import msal
 import pyodbc
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
+from flask import (Flask, Response, abort, flash, jsonify, redirect, render_template, request, session,
+                   url_for)
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
@@ -75,6 +79,14 @@ PORTAL_PASSWORD = os.environ.get("PORTAL_PASSWORD", "")
 # Optional image for the header. Empty (default) shows the built-in Hunger Pangs mark.
 LOGO_URL = os.environ.get("LOGO_URL", "")
 
+# User Management (HR edits the employee -> manager mapping). Empty password = section disabled.
+HR_ADMIN_PASSWORD = os.environ.get("HR_ADMIN_PASSWORD", "")
+# Who may open /user-management, as comma-separated networks. Default: office/private networks only, because
+# the portal itself is reachable from the internet. Set to "any" to allow everyone (HTTPS strongly advised).
+HR_ALLOWED_NETWORKS = os.environ.get(
+    "HR_ALLOWED_NETWORKS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128")
+HR_SESSION_MINUTES = int(os.environ.get("HR_SESSION_MINUTES", "30"))
+
 ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
 
 # Workflow: employee submits -> Travel Desk books -> manager approves/rejects
@@ -94,6 +106,11 @@ if not SECRET_KEY:
 # Separate salts: a Travel Desk link can never be used as a manager approval link, and vice versa
 _review_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-review")
 _desk_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-desk")
+
+# Signed session cookie for the User Management unlock (HttpOnly; not readable by page scripts)
+app.secret_key = SECRET_KEY
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                  SESSION_COOKIE_NAME="tp_session")
 
 
 # --------------------------------------------------------------------------
@@ -595,7 +612,7 @@ def require_portal_login():
 @app.get("/")
 def index():
     today = date.today().isoformat()
-    return render_template("index.html", today=today, logo_url=LOGO_URL)
+    return render_template("index.html", today=today, logo_url=LOGO_URL, show_hr_link=True)
 
 
 @app.get("/healthz")
@@ -942,6 +959,293 @@ def review(request_id):
     except Exception:  # noqa: BLE001
         log.exception("Final emails failed for %s", request_id)
     return render_template("review.html", state="done", **page)
+
+
+# --------------------------------------------------------------------------
+# User Management - HR maintains the employee -> manager mapping that routes approval emails
+# --------------------------------------------------------------------------
+_CODE_RE = re.compile(r"^[A-Za-z0-9\-_/.]{1,50}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_hr_failures = {}            # ip -> [timestamps of failed password attempts]
+_hr_failures_lock = threading.Lock()
+HR_MAX_FAILURES, HR_LOCKOUT_SECONDS = 5, 15 * 60
+
+
+def _hr_networks():
+    if HR_ALLOWED_NETWORKS.strip().lower() == "any":
+        return None
+    nets = []
+    for part in HR_ALLOWED_NETWORKS.split(","):
+        try:
+            nets.append(ipaddress.ip_network(part.strip(), strict=False))
+        except ValueError:
+            log.warning("Ignoring invalid HR_ALLOWED_NETWORKS entry: %r", part)
+    return nets
+
+
+def hr_network_allowed(ip):
+    nets = _hr_networks()
+    if nets is None:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in n for n in nets)
+
+
+def _hr_locked_out(ip):
+    now = time.time()
+    with _hr_failures_lock:
+        recent = [t for t in _hr_failures.get(ip, []) if now - t < HR_LOCKOUT_SECONDS]
+        _hr_failures[ip] = recent
+        return len(recent) >= HR_MAX_FAILURES
+
+
+def _hr_record_failure(ip):
+    with _hr_failures_lock:
+        _hr_failures.setdefault(ip, []).append(time.time())
+
+
+def hr_unlocked():
+    """True while this browser's HR session is valid (sliding HR_SESSION_MINUTES idle timeout)."""
+    last = session.get("hr_unlocked_at")
+    if not last or time.time() - last > HR_SESSION_MINUTES * 60:
+        session.pop("hr_unlocked_at", None)
+        return False
+    session["hr_unlocked_at"] = time.time()
+    return True
+
+
+def csrf_token():
+    if "csrf" not in session:
+        session["csrf"] = secrets.token_urlsafe(32)
+    return session["csrf"]
+
+
+def csrf_ok():
+    sent = request.form.get("csrf", "")
+    return bool(sent) and secrets.compare_digest(sent, session.get("csrf", ""))
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
+
+
+@app.before_request
+def guard_user_management():
+    if not request.path.startswith("/user-management"):
+        return None
+    if not hr_network_allowed(request.remote_addr or ""):
+        log.warning("User Management blocked for %s (not in HR_ALLOWED_NETWORKS)", request.remote_addr)
+        return render_template("hr_login.html", state="network", logo_url=LOGO_URL, show_hr_link=True), 403
+    if not HR_ADMIN_PASSWORD:
+        return render_template("hr_login.html", state="disabled", logo_url=LOGO_URL, show_hr_link=True), 503
+    if request.endpoint in ("hr_login", "static") or hr_unlocked():
+        return None
+    if request.path.startswith("/user-management/api/"):
+        return jsonify({"error": "locked"}), 401
+    return redirect(url_for("hr_login"))
+
+
+# ---- database
+def list_mappings():
+    """Every mapping row with names from the HR master (codes not in the master show no name)."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT m.id, m.EmpCode, e.EmployeeName, e.Status, {_q(EMP_EMAIL_COL)}, m.ManagerCode, mg.EmployeeName,
+                   {_q(MGR_EMAIL_COL)}
+            FROM {_q(MAPPING_TABLE)} m
+            LEFT JOIN {_q(EMPLOYEE_TABLE)} e ON e.EmpCode = m.EmpCode
+            LEFT JOIN {_q(EMPLOYEE_TABLE)} mg ON mg.EmpCode = m.ManagerCode
+            ORDER BY m.EmpCode
+            """
+        )
+        rows = cur.fetchall()
+    return [{"id": int(r[0]), "emp_code": _clean(r[1]) or "", "emp_name": _clean(r[2]), "emp_status": _clean(r[3]),
+             "emp_email": _clean(r[4]) or "", "mgr_code": _clean(r[5]) or "", "mgr_name": _clean(r[6]),
+             "mgr_email": _clean(r[7]) or ""} for r in rows]
+
+
+def get_mapping(mapping_id):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT id, EmpCode, ManagerCode, {_q(EMP_EMAIL_COL)}, {_q(MGR_EMAIL_COL)} "
+                    f"FROM {_q(MAPPING_TABLE)} WHERE id = ?", mapping_id)
+        r = cur.fetchone()
+    if not r:
+        return None
+    return {"id": int(r[0]), "emp_code": _clean(r[1]) or "", "mgr_code": _clean(r[2]) or "",
+            "emp_email": _clean(r[3]) or "", "mgr_email": _clean(r[4]) or ""}
+
+
+def mapping_id_for(emp_code):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT TOP 1 id FROM {_q(MAPPING_TABLE)} WHERE EmpCode = ? ORDER BY id DESC", emp_code)
+        r = cur.fetchone()
+    return int(r[0]) if r else None
+
+
+def save_mapping(m, mapping_id=None):
+    """Insert (mapping_id None) or update one mapping row. Blank values are stored as NULL."""
+    vals = [m["emp_code"], m["mgr_code"] or None, m["emp_email"] or None, m["mgr_email"] or None]
+    with get_conn() as conn:
+        cur = conn.cursor()
+        if mapping_id is None:
+            cur.execute(f"INSERT INTO {_q(MAPPING_TABLE)} (EmpCode, ManagerCode, {_q(EMP_EMAIL_COL)}, "
+                        f"{_q(MGR_EMAIL_COL)}) VALUES (?, ?, ?, ?)", *vals)
+            ok = True
+        else:
+            cur.execute(f"UPDATE {_q(MAPPING_TABLE)} SET EmpCode = ?, ManagerCode = ?, {_q(EMP_EMAIL_COL)} = ?, "
+                        f"{_q(MGR_EMAIL_COL)} = ? WHERE id = ?", *vals, mapping_id)
+            ok = cur.rowcount == 1
+        conn.commit()
+    return ok
+
+
+def delete_mapping(mapping_id):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DELETE FROM {_q(MAPPING_TABLE)} WHERE id = ?", mapping_id)
+        ok = cur.rowcount == 1
+        conn.commit()
+    return ok
+
+
+def master_lookup(code):
+    """Name / email / status for a code from the HR master, or None."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT TOP 1 EmployeeName, EmployeeEmail, Status FROM {_q(EMPLOYEE_TABLE)} WHERE EmpCode = ?",
+                    code)
+        r = cur.fetchone()
+    return {"name": _clean(r[0]), "email": _clean(r[1]), "status": _clean(r[2])} if r else None
+
+
+def validate_mapping(form, mapping_id=None):
+    """Returns (values, errors)."""
+    v = {k: form.get(k, "").strip() for k in ("emp_code", "emp_email", "mgr_code", "mgr_email")}
+    errors = {}
+    if not _CODE_RE.match(v["emp_code"]):
+        errors["emp_code"] = "Enter the employee code (letters, digits, - _ / . only)."
+    if v["mgr_code"] and not _CODE_RE.match(v["mgr_code"]):
+        errors["mgr_code"] = "Manager code can use letters, digits, - _ / . only."
+    if v["mgr_code"] and v["mgr_code"].lower() == v["emp_code"].lower():
+        errors["mgr_code"] = "An employee cannot be their own manager. Leave it blank for a HOD."
+    for key in ("emp_email", "mgr_email"):
+        if v[key] and (len(v[key]) > 256 or not _EMAIL_RE.match(v[key])):
+            errors[key] = "Enter a valid email address, or leave it blank."
+    if v["mgr_code"] and not v["mgr_email"]:
+        errors["mgr_email"] = "The manager's email is needed to send approval requests."
+    if "emp_code" not in errors:
+        existing = mapping_id_for(v["emp_code"])
+        if existing is not None and existing != mapping_id:
+            errors["emp_code"] = f"{v['emp_code']} already has a mapping. Edit that row instead."
+    return v, errors
+
+
+def _audit(action, before=None, after=None):
+    log.info("USER-MGMT %s from %s | before=%s | after=%s", action, request.remote_addr, before, after)
+
+
+# ---- routes
+@app.route("/user-management/login", methods=["GET", "POST"])
+def hr_login():
+    if hr_unlocked():
+        return redirect(url_for("hr_dashboard"))
+    ip = request.remote_addr or ""
+    page = dict(logo_url=LOGO_URL, show_hr_link=True, hr_active=True)
+    if _hr_locked_out(ip):
+        return render_template("hr_login.html", state="locked", **page), 429
+    if request.method == "GET":
+        return render_template("hr_login.html", state="login", **page)
+    if not csrf_ok():
+        return render_template("hr_login.html", state="login", error="Your session expired. Please try again.",
+                               **page), 400
+    if secrets.compare_digest(request.form.get("password", "").encode(), HR_ADMIN_PASSWORD.encode()):
+        session.clear()  # fresh session on unlock
+        session["hr_unlocked_at"] = time.time()
+        csrf_token()
+        log.info("USER-MGMT unlocked from %s", ip)
+        return redirect(url_for("hr_dashboard"))
+    _hr_record_failure(ip)
+    log.warning("USER-MGMT wrong password from %s", ip)
+    if _hr_locked_out(ip):
+        return render_template("hr_login.html", state="locked", **page), 429
+    return render_template("hr_login.html", state="login", error="Incorrect password.", **page), 401
+
+
+@app.post("/user-management/logout")
+def hr_logout():
+    if csrf_ok():
+        session.pop("hr_unlocked_at", None)
+    return redirect(url_for("hr_login"))
+
+
+@app.get("/user-management")
+def hr_dashboard(form=None, form_errors=None, status=200):
+    try:
+        rows = list_mappings()
+    except Exception:  # noqa: BLE001
+        log.exception("Could not load mappings")
+        rows, form_errors = [], {"_": "Could not load the mappings from the database."}
+    stats = {
+        "total": len(rows),
+        "no_manager": sum(1 for r in rows if not r["mgr_code"]),
+        "missing_mgr_email": sum(1 for r in rows if r["mgr_code"] and not r["mgr_email"]),
+        "missing_emp_email": sum(1 for r in rows if not r["emp_email"]),
+    }
+    return render_template("hr_users.html", rows=rows, stats=stats, form=form or {}, form_errors=form_errors or {},
+                           logo_url=LOGO_URL, show_hr_link=True, hr_active=True,
+                           session_minutes=HR_SESSION_MINUTES), status
+
+
+@app.post("/user-management/save")
+def hr_save():
+    if not csrf_ok():
+        flash("Your session expired. Please try again.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    raw_id = request.form.get("id", "").strip()
+    mapping_id = int(raw_id) if raw_id.isdigit() else None
+    before = get_mapping(mapping_id) if mapping_id else None
+    if mapping_id and not before:
+        flash("That mapping no longer exists.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    values, errors = validate_mapping(request.form, mapping_id)
+    if errors:
+        return hr_dashboard(form={**values, "id": raw_id}, form_errors=errors, status=400)
+    save_mapping(values, mapping_id)
+    _audit("UPDATE" if mapping_id else "ADD", before, values)
+    who = values["emp_code"]
+    flash(f"Mapping for {who} {'updated' if mapping_id else 'added'}. New travel requests use it immediately.", "ok")
+    return redirect(url_for("hr_dashboard", q=who))
+
+
+@app.post("/user-management/delete")
+def hr_delete():
+    if not csrf_ok():
+        flash("Your session expired. Please try again.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    raw_id = request.form.get("id", "")
+    before = get_mapping(int(raw_id)) if raw_id.isdigit() else None
+    if not before or not delete_mapping(before["id"]):
+        flash("That mapping no longer exists.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    _audit("DELETE", before)
+    flash(f"Mapping for {before['emp_code']} deleted.", "ok")
+    return redirect(url_for("hr_dashboard"))
+
+
+@app.get("/user-management/api/lookup/<code>")
+def hr_lookup(code):
+    """Name/email from the HR master while HR types a code in the form."""
+    if not _CODE_RE.match(code):
+        return jsonify({"found": False}), 400
+    m = master_lookup(code)
+    return jsonify({"found": bool(m), **(m or {})})
+
 
 if __name__ == "__main__":
     from waitress import serve

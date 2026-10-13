@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>User Management | Hunger Pangs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  {% include "_brand.html" %}
+  <style>
+    .page { max-width: 1240px; }
+    .head-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+    .head-row h1 { font-size: clamp(1.5rem, 2.6vw, 1.95rem); font-weight: 700; margin: 0 0 .25rem; }
+    .head-row p { color: var(--hp-muted); margin: 0; }
+
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+    @media (max-width: 767px) { .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .stat { text-align: left; background: #fff; border: 1px solid var(--hp-line); border-radius: 12px; padding: .8rem 1rem; cursor: pointer; transition: border-color .15s, background .15s; }
+    .stat:hover { border-color: var(--hp-line-strong); }
+    .stat.active { border-color: var(--hp-terracotta); background: #fdf3ec; }
+    .stat-num { font-family: var(--hp-display); font-weight: 700; font-size: 1.5rem; color: var(--hp-ink); line-height: 1.1; }
+    .stat-label { font-size: .8rem; color: var(--hp-muted); }
+    .stat.warn .stat-num { color: #9b3523; }
+
+    .toolbar { display: flex; gap: .75rem; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid var(--hp-line); flex-wrap: wrap; }
+    .search { position: relative; flex: 1 1 260px; }
+    .search i { position: absolute; left: .85rem; top: 50%; transform: translateY(-50%); color: #a08f7a; }
+    .search .form-control { padding-left: 2.3rem; }
+
+    .tbl { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    .tbl th { background: #f6efe6; color: #6b5a4e; font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; padding: .7rem 1rem; text-align: left; white-space: nowrap; }
+    .tbl td { padding: .7rem 1rem; border-top: 1px solid var(--hp-line); vertical-align: top; color: #3b2f2a; }
+    .tbl tr:hover td { background: #fffcf6; }
+    .code { font-weight: 700; color: var(--hp-ink); }
+    .sub { font-size: .8rem; color: var(--hp-muted); word-break: break-all; }
+    .missing { display: inline-block; font-size: .72rem; font-weight: 600; color: #9b3523; background: #fbeae6; border-radius: 999px; padding: .1rem .5rem; }
+    .hod { display: inline-block; font-size: .72rem; font-weight: 600; color: #4d5716; background: #eef2dc; border-radius: 999px; padding: .1rem .5rem; }
+    .not-master { font-size: .72rem; color: #8a6d0b; }
+    .row-actions { white-space: nowrap; text-align: right; }
+    .icon-btn { border: 1px solid transparent; background: transparent; color: var(--hp-muted); border-radius: 8px; padding: .3rem .55rem; font-size: .85rem; }
+    .icon-btn:hover { background: var(--hp-tint); color: var(--hp-ink); }
+    .icon-btn.danger:hover { background: #fbeae6; color: #9b3523; }
+    .table-wrap { overflow-x: auto; }
+    .pager { display: flex; justify-content: space-between; align-items: center; padding: .85rem 1.25rem; border-top: 1px solid var(--hp-line); font-size: .85rem; color: var(--hp-muted); }
+    .empty { padding: 2.5rem 1rem; text-align: center; color: var(--hp-muted); }
+
+    .modal-content { border-radius: 16px; border: 1px solid var(--hp-line); }
+    .modal-header, .modal-footer { border-color: var(--hp-line); }
+    .modal-title { font-family: var(--hp-display); font-weight: 700; }
+    .hint { font-size: .8rem; margin-top: .3rem; min-height: 1.1rem; color: var(--hp-muted); }
+    .hint.ok { color: var(--hp-olive); }
+    .hint.warn { color: #8a6d0b; }
+    .btn-danger-soft { background: #c54b36; border: 1px solid #c54b36; color: #fff; border-radius: 10px; font-weight: 600; padding: .6rem 1.2rem; }
+    .btn-danger-soft:hover { background: #a83c29; color: #fff; }
+  </style>
+</head>
+<body>
+  {% include "_header.html" %}
+
+  <main class="page">
+    <div class="head-row">
+      <div>
+        <div class="eyebrow mb-2">HR &middot; Approval routing</div>
+        <h1>User Management</h1>
+        <p>Employee &rarr; manager mappings. Changes apply to new travel requests immediately.</p>
+      </div>
+      <div class="d-flex gap-2">
+        <form method="post" action="/user-management/logout" class="m-0">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-hp-ghost"><i class="fas fa-lock me-1"></i> Lock</button>
+        </form>
+        <button type="button" class="btn btn-hp" id="addBtn"><i class="fas fa-plus me-1"></i> Add mapping</button>
+      </div>
+    </div>
+
+    {% for kind, msg in get_flashed_messages(with_categories=true) %}
+      <div class="notice {{ 'notice-ok' if kind == 'ok' else 'notice-bad' }} mb-3"><i class="fas {{ 'fa-circle-check' if kind == 'ok' else 'fa-triangle-exclamation' }}"></i><div>{{ msg }}</div></div>
+    {% endfor %}
+    {% if form_errors._ %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ form_errors._ }}</div></div>{% endif %}
+
+    <div class="stats">
+      <button type="button" class="stat active" data-filter="all"><div class="stat-num">{{ stats.total }}</div><div class="stat-label">All mappings</div></button>
+      <button type="button" class="stat warn" data-filter="mgr_email"><div class="stat-num">{{ stats.missing_mgr_email }}</div><div class="stat-label">Missing manager email</div></button>
+      <button type="button" class="stat warn" data-filter="emp_email"><div class="stat-num">{{ stats.missing_emp_email }}</div><div class="stat-label">Missing employee email</div></button>
+      <button type="button" class="stat" data-filter="hod"><div class="stat-num">{{ stats.no_manager }}</div><div class="stat-label">No manager (HOD)</div></button>
+    </div>
+
+    <div class="hp-card">
+      <div class="toolbar">
+        <div class="search"><i class="fas fa-magnifying-glass"></i>
+          <input type="search" class="form-control" id="search" placeholder="Search code, name or email" value="{{ request.args.get('q', '') }}">
+        </div>
+        <span class="sub" id="countLabel"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>Emp Code</th><th>Employee</th><th>Manager</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty d-none" id="empty">No mappings match.</div>
+      </div>
+      <div class="pager">
+        <span id="pageLabel"></span>
+        <div class="d-flex gap-2">
+          <button type="button" class="icon-btn" id="prev"><i class="fas fa-chevron-left me-1"></i>Prev</button>
+          <button type="button" class="icon-btn" id="next">Next<i class="fas fa-chevron-right ms-1"></i></button>
+        </div>
+      </div>
+    </div>
+    <p class="help mt-3">The section locks itself after {{ session_minutes }} minutes without activity. Every change is logged.</p>
+  </main>
+
+  <!-- Add / edit -->
+  <div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form class="modal-content" method="post" action="/user-management/save" novalidate>
+        <div class="modal-header">
+          <h2 class="modal-title fs-5" id="editTitle">Add mapping</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="id" id="f_id" value="{{ form.id or '' }}">
+          <div class="row g-3">
+            <div class="col-sm-6">
+              <label class="form-label" for="f_emp_code">Emp Code<span class="req">*</span></label>
+              <input class="form-control {{ 'is-invalid' if form_errors.emp_code }}" id="f_emp_code" name="emp_code" maxlength="50" value="{{ form.emp_code or '' }}" required>
+              <div class="invalid-feedback">{{ form_errors.emp_code }}</div>
+              <div class="hint" id="h_emp"></div>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="f_emp_email">Emp Email</label>
+              <input type="email" class="form-control {{ 'is-invalid' if form_errors.emp_email }}" id="f_emp_email" name="emp_email" maxlength="256" value="{{ form.emp_email or '' }}">
+              <div class="invalid-feedback">{{ form_errors.emp_email }}</div>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="f_mgr_code">Manager Code</label>
+              <input class="form-control {{ 'is-invalid' if form_errors.mgr_code }}" id="f_mgr_code" name="mgr_code" maxlength="50" value="{{ form.mgr_code or '' }}">
+              <div class="invalid-feedback">{{ form_errors.mgr_code }}</div>
+              <div class="hint" id="h_mgr">Leave blank for a HOD (no manager approval).</div>
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="f_mgr_email">Manager Email</label>
+              <input type="email" class="form-control {{ 'is-invalid' if form_errors.mgr_email }}" id="f_mgr_email" name="mgr_email" maxlength="256" value="{{ form.mgr_email or '' }}">
+              <div class="invalid-feedback">{{ form_errors.mgr_email }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-hp-ghost" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-hp" id="saveBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete -->
+  <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form class="modal-content" method="post" action="/user-management/delete">
+        <div class="modal-header">
+          <h2 class="modal-title fs-5">Delete mapping?</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="id" id="d_id">
+          <p class="mb-2">Delete the mapping for <strong id="d_who"></strong>?</p>
+          <p class="help mb-0">Without a mapping, this employee's travel requests skip manager approval, as for a HOD.
+            To change their manager instead, use <strong>Edit</strong>.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-hp-ghost" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-danger-soft"><i class="fas fa-trash me-1"></i> Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer class="hp-footer"><div>Hunger Pangs &middot; Travel Accommodation Portal &middot; For internal use</div></footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const ROWS = {{ rows | tojson }};
+    const PAGE = 50;
+    const $ = (id) => document.getElementById(id);
+    const esc = (t) => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let filter = 'all', page = 0;
+
+    const matchesFilter = (r) =>
+      filter === 'all' ||
+      (filter === 'mgr_email' && r.mgr_code && !r.mgr_email) ||
+      (filter === 'emp_email' && !r.emp_email) ||
+      (filter === 'hod' && !r.mgr_code);
+
+    function render() {
+      const q = $('search').value.trim().toLowerCase();
+      const list = ROWS.filter(r => matchesFilter(r) && (!q ||
+        [r.emp_code, r.emp_name, r.emp_email, r.mgr_code, r.mgr_name, r.mgr_email].some(v => (v || '').toLowerCase().includes(q))));
+      const pages = Math.max(1, Math.ceil(list.length / PAGE));
+      page = Math.min(page, pages - 1);
+      const slice = list.slice(page * PAGE, page * PAGE + PAGE);
+      $('rows').innerHTML = slice.map(r => `
+        <tr>
+          <td><span class="code">${esc(r.emp_code)}</span>
+            ${r.emp_status && r.emp_status !== 'Active' ? `<div class="sub">${esc(r.emp_status)}</div>` : ''}</td>
+          <td>${r.emp_name ? esc(r.emp_name) : '<span class="not-master">Not in HR master</span>'}
+            <div class="sub">${r.emp_email ? esc(r.emp_email) : '<span class="missing">Email missing</span>'}</div></td>
+          <td>${r.mgr_code
+              ? `<span class="code">${esc(r.mgr_code)}</span> ${r.mgr_name ? '&middot; ' + esc(r.mgr_name) : ''}
+                 <div class="sub">${r.mgr_email ? esc(r.mgr_email) : '<span class="missing">Email missing</span>'}</div>`
+              : '<span class="hod">No manager (HOD)</span>'}</td>
+          <td class="row-actions">
+            <button type="button" class="icon-btn" data-edit="${r.id}" title="Edit"><i class="fas fa-pen"></i> Edit</button>
+            <button type="button" class="icon-btn danger" data-delete="${r.id}" title="Delete"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>`).join('');
+      $('empty').classList.toggle('d-none', list.length > 0);
+      $('countLabel').textContent = `${list.length} of ${ROWS.length}`;
+      $('pageLabel').textContent = list.length ? `Showing ${page * PAGE + 1}-${page * PAGE + slice.length} of ${list.length}` : '';
+      $('prev').disabled = page === 0;
+      $('next').disabled = page >= pages - 1;
+    }
+
+    $('search').addEventListener('input', () => { page = 0; render(); });
+    $('prev').addEventListener('click', () => { page--; render(); });
+    $('next').addEventListener('click', () => { page++; render(); });
+    document.querySelectorAll('.stat').forEach(b => b.addEventListener('click', () => {
+      document.querySelectorAll('.stat').forEach(x => x.classList.remove('active'));
+      b.classList.add('active'); filter = b.dataset.filter; page = 0; render();
+    }));
+
+    // ---- add / edit
+    const editModal = new bootstrap.Modal($('editModal'));
+    function clearErrors() { document.querySelectorAll('#editModal .is-invalid').forEach(el => el.classList.remove('is-invalid')); }
+    function openEditor(r) {
+      clearErrors();
+      $('editTitle').textContent = r ? `Edit mapping - ${r.emp_code}` : 'Add mapping';
+      $('saveBtn').textContent = r ? 'Save changes' : 'Add mapping';
+      $('f_id').value = r ? r.id : '';
+      $('f_emp_code').value = r ? r.emp_code : '';
+      $('f_emp_email').value = r ? r.emp_email : '';
+      $('f_mgr_code').value = r ? r.mgr_code : '';
+      $('f_mgr_email').value = r ? r.mgr_email : '';
+      lookup('emp'); lookup('mgr');
+      editModal.show();
+    }
+    $('addBtn').addEventListener('click', () => openEditor(null));
+    $('rows').addEventListener('click', (e) => {
+      const ed = e.target.closest('[data-edit]'), del = e.target.closest('[data-delete]');
+      if (ed) openEditor(ROWS.find(r => r.id === +ed.dataset.edit));
+      if (del) {
+        const r = ROWS.find(x => x.id === +del.dataset.delete);
+        $('d_id').value = r.id;
+        $('d_who').textContent = r.emp_code + (r.emp_name ? ' (' + r.emp_name + ')' : '');
+        new bootstrap.Modal($('deleteModal')).show();
+      }
+    });
+
+    // Live name lookup from the HR master; fills an empty email field when the master has one
+    const timers = {};
+    async function lookup(kind) {
+      const code = $('f_' + kind + '_code').value.trim(), hint = $('h_' + kind);
+      if (!code) {
+        hint.className = 'hint';
+        hint.textContent = kind === 'mgr' ? 'Leave blank for a HOD (no manager approval).' : '';
+        return;
+      }
+      try {
+        const res = await fetch('/user-management/api/lookup/' + encodeURIComponent(code));
+        if (res.status === 401) { location.href = '/user-management/login'; return; }
+        const d = await res.json();
+        if ($('f_' + kind + '_code').value.trim() !== code) return;
+        if (d.found) {
+          hint.className = 'hint ' + (d.status === 'Active' ? 'ok' : 'warn');
+          hint.innerHTML = '<i class="fas fa-circle-check me-1"></i>' + esc(d.name || '') + (d.status && d.status !== 'Active' ? ' &middot; ' + esc(d.status) : '');
+          const email = $('f_' + kind + '_email');
+          if (d.email && !email.value) email.value = d.email;
+        } else {
+          hint.className = 'hint warn';
+          hint.textContent = 'Not found in the HR master (check the code).';
+        }
+      } catch (_) { hint.className = 'hint'; hint.textContent = ''; }
+    }
+    ['emp', 'mgr'].forEach(kind => $('f_' + kind + '_code').addEventListener('input', () => {
+      clearTimeout(timers[kind]); timers[kind] = setTimeout(() => lookup(kind), 350);
+    }));
+
+    render();
+    {% if form_errors and not form_errors._ %}
+      // Server rejected the form: reopen it with the values and messages
+      $('editTitle').textContent = $('f_id').value ? 'Edit mapping' : 'Add mapping';
+      $('saveBtn').textContent = $('f_id').value ? 'Save changes' : 'Add mapping';
+      lookup('emp'); lookup('mgr');
+      editModal.show();
+    {% endif %}
+  </script>
+</body>
+</html>

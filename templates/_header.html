@@ -8,6 +8,9 @@
     {% endif %}
   </a>
   <nav class="hp-nav">
-    <a href="/">{{ app_name or 'Travel Accommodation Portal' }}</a>
+    <a href="/" class="nav-title {{ 'active' if show_hr_link and not hr_active }}">{{ app_name or 'Travel Accommodation Portal' }}</a>
+    {% if show_hr_link %}
+      <a href="/user-management" class="{{ 'active' if hr_active }}"><i class="fas fa-users-gear me-1"></i>User Management</a>
+    {% endif %}
   </nav>
 </header>

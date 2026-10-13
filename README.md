@@ -2,7 +2,7 @@
 
 Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.30.90** alongside SQL Server `MingalabaDB`.
 
-**URL (office network / VPN only):** http://10.10.30.90:8080
+**URL:** `http://<Public-IP>:9000` from anywhere (the company router forwards port 9000 to 10.10.30.90), or `http://10.10.30.90:9000` in the office. Email links use `APP_BASE_URL` from `.env`.
 
 ## How it works
 
@@ -21,6 +21,21 @@ Database migrations (run once each, in order; all applied on MingalabaDB, 001-00
 - `deploy/migrate_003_booking_ref.sql` adds `BookingRefID` (auto-numbered from 10001), shown as "Booking Ref: #10001" in emails.
 - `deploy/migrate_004_booking_options.sql` adds `BookingOptions` (JSON list of the Travel Desk's options) and `SelectedOption` (the one the manager approved).
 
+## User Management (HR)
+
+The **User Management** tab lets HR add, edit and delete rows in `dbo.checklist_empmanager_mapping`, the table that decides who approves each employee's travel. Changes apply to new requests immediately.
+
+- Unlock with `HR_ADMIN_PASSWORD` from `.env`. The section locks again after `HR_SESSION_MINUTES` (30) of inactivity, or with **Lock**.
+- 5 wrong passwords from one address pause sign-in for 15 minutes.
+- By default it opens only from office/private networks (`HR_ALLOWED_NETWORKS`), even though the portal itself is public. Set it to `any` only once the portal runs on HTTPS.
+- Leaving the manager code blank marks the employee as a HOD (no manager approval). Deleting a row has the same effect.
+- Every add/edit/delete is written to `logs\portal.log` with the before/after values and the sender's IP.
+- The same table may be used by other checklist apps on MingalabaDB; edits affect them too.
+
+## Security note (public IP over HTTP)
+
+The portal is reachable from the internet on plain `http://`. Passwords (portal login, HR password) and approval links travel unencrypted, so anyone on the network path (public Wi-Fi, mobile carrier) can read them. Put HTTPS in front before wide use: e.g. a company domain with a certificate on IIS (reverse proxy to port 9000), or ask IT for their preferred TLS setup. Then set `APP_BASE_URL` to the `https://` address.
+
 ## Deploy on 10.10.30.90
 
 Prerequisites on the server: Python 3.10+ (installed for all users, on PATH) and *ODBC Driver 18 for SQL Server*.
@@ -31,7 +46,7 @@ Prerequisites on the server: Python 3.10+ (installed for all users, on PATH) and
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\deploy\install.ps1
    ```
-   The script installs packages into `.venv`, checks the database connection, opens TCP 8080 in Windows Firewall (Domain/Private networks), and registers a `TravelPortal` scheduled task that starts the portal at boot and restarts it if it stops.
+   The script installs packages into `.venv`, checks the database connection, opens the `PORT` from `.env` (9000) in Windows Firewall (Domain/Private networks), and registers a `TravelPortal` scheduled task that starts the portal at boot and restarts it if it stops.
 
 ## Operate
 
@@ -40,6 +55,6 @@ Prerequisites on the server: Python 3.10+ (installed for all users, on PATH) and
 | Status | `Get-ScheduledTask TravelPortal` |
 | Restart (e.g. after editing `.env` or updating code) | `powershell -ExecutionPolicy Bypass -File .\deploy\restart.ps1` |
 | Logs | `Get-Content .\logs\portal.log -Tail 50 -Wait` |
-| Health check | `Invoke-WebRequest http://127.0.0.1:8080/healthz` |
+| Health check | `Invoke-WebRequest http://127.0.0.1:9000/healthz` |
 
-To run it in the foreground for troubleshooting, stop the task (`Stop-ScheduledTask TravelPortal`, then end any `python.exe` still holding port 8080) and run `.\.venv\Scripts\python app.py` instead.
+To run it in the foreground for troubleshooting, stop the task (`Stop-ScheduledTask TravelPortal`, then end any `python.exe` still holding port 9000) and run `.\.venv\Scripts\python app.py` instead.

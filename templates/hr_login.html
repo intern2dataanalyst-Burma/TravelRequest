@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>User Management | Hunger Pangs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  {% include "_brand.html" %}
+  <style>
+    .page { max-width: 440px; padding-top: 4rem; }
+    .lock-icon { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: #fdf3ec; color: var(--hp-terracotta); font-size: 1.3rem; margin: 0 auto 1rem; }
+  </style>
+</head>
+<body>
+  {% include "_header.html" %}
+
+  <main class="page">
+    <div class="hp-card hp-card-pad text-center">
+      {% if state == 'network' %}
+        <div class="lock-icon"><i class="fas fa-building-shield"></i></div>
+        <h1 class="h4 fw-bold">Office network only</h1>
+        <p class="mb-0" style="color: var(--hp-muted)">User Management can only be opened from the office network or VPN.</p>
+      {% elif state == 'disabled' %}
+        <div class="lock-icon"><i class="fas fa-lock"></i></div>
+        <h1 class="h4 fw-bold">Not set up yet</h1>
+        <p class="mb-0" style="color: var(--hp-muted)">Ask IT to set <code>HR_ADMIN_PASSWORD</code> in the portal's configuration.</p>
+      {% elif state == 'locked' %}
+        <div class="lock-icon"><i class="fas fa-hourglass-half"></i></div>
+        <h1 class="h4 fw-bold">Too many attempts</h1>
+        <p class="mb-0" style="color: var(--hp-muted)">For security, sign-in is paused for 15 minutes. Please try again later.</p>
+      {% else %}
+        <div class="lock-icon"><i class="fas fa-lock"></i></div>
+        <h1 class="h4 fw-bold mb-1">User Management</h1>
+        <p style="color: var(--hp-muted)">Enter the HR password to manage employee-manager mappings.</p>
+        {% if error %}<div class="notice notice-bad mb-3 text-start"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
+        <form method="post" class="text-start">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+          <label for="password" class="form-label">HR password</label>
+          <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required autofocus>
+          <button type="submit" class="btn btn-hp w-100 mt-3"><i class="fas fa-unlock me-1"></i> Unlock</button>
+        </form>
+      {% endif %}
+    </div>
+  </main>
+
+  <footer class="hp-footer"><div>Hunger Pangs &middot; Travel Accommodation Portal &middot; For internal use</div></footer>
+</body>
+</html>
