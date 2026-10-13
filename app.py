@@ -61,8 +61,9 @@ DB_TRUST_CERT = os.environ.get("DB_TRUST_SERVER_CERT", "yes")  # "yes" for self-
 # Optional: a full ODBC connection string overrides the individual DB_* values above
 DB_CONNECTION_STRING = os.environ.get("DB_CONNECTION_STRING", "")
 
-# Hierarchy table (EmpCode -> ManagerCode)
-MAPPING_TABLE = os.environ.get("MAPPING_TABLE", "dbo.checklist_empmanager_mapping")
+# The portal's own employee -> manager routing table (migration 005), maintained by HR in User Management.
+# dbo.checklist_empmanager_mapping belongs to the checklist apps: it was only read once, to seed this table.
+MAPPING_TABLE = os.environ.get("MAPPING_TABLE", "dbo.TravelApproverMapping")
 # Email columns inside the mapping table itself
 EMP_EMAIL_COL = os.environ.get("EMP_EMAIL_COL", "EmpEmail")
 MGR_EMAIL_COL = os.environ.get("MGR_EMAIL_COL", "ManagerEmail")
@@ -1088,27 +1089,41 @@ def mapping_id_for(emp_code):
     return int(r[0]) if r else None
 
 
+class SharedTableError(RuntimeError):
+    """Raised instead of writing to a table that belongs to another application."""
+
+
+def _writable_mapping_table():
+    """The checklist apps own dbo.checklist_* tables; the portal must never write to them."""
+    if "checklist_" in MAPPING_TABLE.lower():
+        raise SharedTableError(f"{MAPPING_TABLE} is shared with the checklist apps; set MAPPING_TABLE to "
+                               "dbo.TravelApproverMapping (migration 005)")
+    return _q(MAPPING_TABLE)
+
+
 def save_mapping(m, mapping_id=None):
-    """Insert (mapping_id None) or update one mapping row. Blank values are stored as NULL."""
+    """Insert (mapping_id None) or update one mapping row in the portal's own table. Blank values become NULL."""
+    table = _writable_mapping_table()
     vals = [m["emp_code"], m["mgr_code"] or None, m["emp_email"] or None, m["mgr_email"] or None]
     with get_conn() as conn:
         cur = conn.cursor()
         if mapping_id is None:
-            cur.execute(f"INSERT INTO {_q(MAPPING_TABLE)} (EmpCode, ManagerCode, {_q(EMP_EMAIL_COL)}, "
+            cur.execute(f"INSERT INTO {table} (EmpCode, ManagerCode, {_q(EMP_EMAIL_COL)}, "
                         f"{_q(MGR_EMAIL_COL)}) VALUES (?, ?, ?, ?)", *vals)
             ok = True
         else:
-            cur.execute(f"UPDATE {_q(MAPPING_TABLE)} SET EmpCode = ?, ManagerCode = ?, {_q(EMP_EMAIL_COL)} = ?, "
-                        f"{_q(MGR_EMAIL_COL)} = ? WHERE id = ?", *vals, mapping_id)
+            cur.execute(f"UPDATE {table} SET EmpCode = ?, ManagerCode = ?, {_q(EMP_EMAIL_COL)} = ?, "
+                        f"{_q(MGR_EMAIL_COL)} = ?, UpdatedAt = SYSUTCDATETIME() WHERE id = ?", *vals, mapping_id)
             ok = cur.rowcount == 1
         conn.commit()
     return ok
 
 
 def delete_mapping(mapping_id):
+    table = _writable_mapping_table()
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute(f"DELETE FROM {_q(MAPPING_TABLE)} WHERE id = ?", mapping_id)
+        cur.execute(f"DELETE FROM {table} WHERE id = ?", mapping_id)
         ok = cur.rowcount == 1
         conn.commit()
     return ok
@@ -1216,7 +1231,17 @@ def hr_save():
     values, errors = validate_mapping(request.form, mapping_id)
     if errors:
         return hr_dashboard(form={**values, "id": raw_id}, form_errors=errors, status=400)
-    save_mapping(values, mapping_id)
+    try:
+        save_mapping(values, mapping_id)
+    except SharedTableError:
+        log.exception("Refused to write the mapping")
+        flash("Saving is disabled: the portal is configured to use a table shared with other apps. "
+              "Ask IT to set MAPPING_TABLE=dbo.TravelApproverMapping.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    except pyodbc.IntegrityError:  # another HR user added the same Emp Code a moment ago
+        return hr_dashboard(form={**values, "id": raw_id},
+                            form_errors={"emp_code": f"{values['emp_code']} already has a mapping. Edit that row instead."},
+                            status=400)
     _audit("UPDATE" if mapping_id else "ADD", before, values)
     who = values["emp_code"]
     flash(f"Mapping for {who} {'updated' if mapping_id else 'added'}. New travel requests use it immediately.", "ok")
@@ -1230,7 +1255,14 @@ def hr_delete():
         return redirect(url_for("hr_dashboard"))
     raw_id = request.form.get("id", "")
     before = get_mapping(int(raw_id)) if raw_id.isdigit() else None
-    if not before or not delete_mapping(before["id"]):
+    try:
+        deleted = bool(before) and delete_mapping(before["id"])
+    except SharedTableError:
+        log.exception("Refused to delete from the mapping table")
+        flash("Deleting is disabled: the portal is configured to use a table shared with other apps. "
+              "Ask IT to set MAPPING_TABLE=dbo.TravelApproverMapping.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    if not deleted:
         flash("That mapping no longer exists.", "bad")
         return redirect(url_for("hr_dashboard"))
     _audit("DELETE", before)
