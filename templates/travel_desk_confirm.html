@@ -19,6 +19,18 @@
     .summary-row span:first-child { color: var(--hp-muted); white-space: nowrap; }
     .summary-row span:last-child { font-weight: 600; color: var(--hp-ink); text-align: right; }
     .input-group-text { background: var(--hp-tint); border-color: var(--hp-line-strong); color: var(--hp-muted); font-weight: 600; border-radius: 10px 0 0 10px; }
+    .option { border: 1px solid var(--hp-line); border-radius: 12px; padding: 1rem 1.1rem 1.15rem; background: #fffdf9; }
+    .option + .option { margin-top: .85rem; }
+    .option-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+    .option-title { font-weight: 700; color: var(--hp-maroon); font-size: .95rem; }
+    .option-sub { font-weight: 500; color: var(--hp-muted); font-size: .8rem; margin-left: .35rem; }
+    .btn-remove { border: 0; background: transparent; color: var(--hp-muted); font-size: .85rem; font-weight: 600; padding: .25rem .5rem; border-radius: 8px; }
+    .btn-remove:hover { color: #9b3523; background: #fbeae6; }
+    .btn-add { border: 1px dashed var(--hp-line-strong); background: transparent; color: var(--hp-terracotta); font-weight: 600; font-size: .9rem; border-radius: 10px; padding: .6rem 1rem; width: 100%; margin-top: .85rem; }
+    .btn-add:hover { border-color: var(--hp-terracotta); background: #fdf3ec; }
+    .opt-view { border: 1px solid var(--hp-line); border-radius: 12px; padding: .5rem 1rem; }
+    .opt-view + .opt-view { margin-top: .75rem; }
+    .opt-view.chosen { border: 2px solid var(--hp-terracotta); background: #fdf3ec; }
   </style>
 </head>
 <body>
@@ -69,49 +81,74 @@
       {% endfor %}
     </div>
 
-    {% if state != 'pending' and r.PropertyName %}
+    {% set saved = booking_options(r) %}
+    {% if state != 'pending' and saved %}
     <div class="hp-card hp-card-pad mb-3">
-      <h2 class="card-title">Booking details</h2>
-      {% for label, value in booking_rows(r) %}
-        <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+      <h2 class="card-title">Booking options sent</h2>
+      {% set chosen = selected_option_no(r) if r.Status == 'Approved' else none %}
+      {% for o in saved %}
+        <div class="opt-view {{ 'chosen' if chosen == loop.index }}">
+          <div class="option-title pt-2">Option {{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok ms-1">Approved</span>{% endif %}</div>
+          {% for label, value in option_rows(o) %}
+            <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+          {% endfor %}
+        </div>
       {% endfor %}
     </div>
     {% endif %}
 
     {% if state == 'pending' %}
-    <form method="post" class="hp-card hp-card-pad" novalidate>
+    <form method="post" class="hp-card hp-card-pad" id="bookingForm" novalidate>
       <h2 class="card-title">Booking details</h2>
       {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
+      {% if errors.form %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ errors.form }}</div></div>{% endif %}
       <input type="hidden" name="t" value="{{ token }}">
-      <div class="row g-3">
-        <div class="col-md-6">
-          <label for="booking_area" class="form-label">Place/Area<span class="req">*</span></label>
-          <input type="text" class="form-control {{ 'is-invalid' if errors.booking_area }}" id="booking_area" name="booking_area"
-                 maxlength="150" placeholder="e.g. Indiranagar" value="{{ values.booking_area }}" required>
-          <div class="invalid-feedback">{{ errors.booking_area or 'Enter the place/area of the stay.' }}</div>
-        </div>
-        <div class="col-md-6">
-          <label for="property_name" class="form-label">Property Name<span class="req">*</span></label>
-          <input type="text" class="form-control {{ 'is-invalid' if errors.property_name }}" id="property_name" name="property_name"
-                 maxlength="200" placeholder="e.g. The Leela Palace" value="{{ values.property_name }}" required>
-          <div class="invalid-feedback">{{ errors.property_name or 'Enter the property name.' }}</div>
-        </div>
-        <div class="col-md-6">
-          <label for="cost" class="form-label">Cost<span class="req">*</span></label>
-          <div class="input-group has-validation">
-            <span class="input-group-text">&#8377;</span>
-            <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors.cost }}" id="cost"
-                   name="cost" maxlength="16" placeholder="e.g. 12500" value="{{ values.cost }}"
-                   pattern="[0-9,]+(\.[0-9]{1,2})?" required>
-            <div class="invalid-feedback">{{ errors.cost or 'Enter the cost as a number, e.g. 12500.' }}</div>
+
+      <div id="options">
+        {% for row in rows %}
+          {% set i = loop.index0 %}
+          <div class="option" data-option>
+            <div class="option-head">
+              <div class="option-title"><span data-num>Option {{ loop.index }}</span>{% if loop.first %}<span class="option-sub">required</span>{% endif %}</div>
+              {% if not loop.first %}<button type="button" class="btn-remove" data-remove><i class="fas fa-xmark me-1"></i>Remove</button>{% endif %}
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">Place/Area<span class="req">*</span></label>
+                <input type="text" class="form-control {{ 'is-invalid' if errors['booking_area-%d' % i] }}" name="booking_area"
+                       maxlength="150" placeholder="e.g. Indiranagar" value="{{ row.booking_area }}" required>
+                <div class="invalid-feedback">{{ errors['booking_area-%d' % i] or 'Enter the place/area of the stay.' }}</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Property Name<span class="req">*</span></label>
+                <input type="text" class="form-control {{ 'is-invalid' if errors['property_name-%d' % i] }}" name="property_name"
+                       maxlength="200" placeholder="e.g. The Leela Palace" value="{{ row.property_name }}" required>
+                <div class="invalid-feedback">{{ errors['property_name-%d' % i] or 'Enter the property name.' }}</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Cost<span class="req">*</span></label>
+                <div class="input-group has-validation">
+                  <span class="input-group-text">&#8377;</span>
+                  <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors['cost-%d' % i] }}" name="cost"
+                         maxlength="16" placeholder="e.g. 12500" value="{{ row.cost }}" pattern="[0-9,]+(\.[0-9]{1,2})?" required>
+                  <div class="invalid-feedback">{{ errors['cost-%d' % i] or 'Enter the cost as a number, e.g. 12500.' }}</div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        {% endfor %}
       </div>
+
+      {% if not direct %}
+        <button type="button" class="btn-add" id="addOption"><i class="fas fa-plus me-1"></i> Add another option</button>
+      {% endif %}
+
       <p class="help mt-3 mb-0">
         {% if direct %}
           This employee has no reporting manager on record, so submitting approves the request and notifies them.
         {% else %}
-          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong> to approve or reject.
+          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong>.
+          With more than one option, they choose which one to approve.
         {% endif %}
       </p>
       <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
@@ -120,13 +157,63 @@
         </button>
       </div>
     </form>
+
+    <template id="optionTemplate">
+      <div class="option" data-option>
+        <div class="option-head">
+          <div class="option-title"><span data-num></span></div>
+          <button type="button" class="btn-remove" data-remove><i class="fas fa-xmark me-1"></i>Remove</button>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Place/Area<span class="req">*</span></label>
+            <input type="text" class="form-control" name="booking_area" maxlength="150" placeholder="e.g. Indiranagar" required>
+            <div class="invalid-feedback">Enter the place/area of the stay.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Property Name<span class="req">*</span></label>
+            <input type="text" class="form-control" name="property_name" maxlength="200" placeholder="e.g. The Leela Palace" required>
+            <div class="invalid-feedback">Enter the property name.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Cost<span class="req">*</span></label>
+            <div class="input-group has-validation">
+              <span class="input-group-text">&#8377;</span>
+              <input type="text" inputmode="decimal" class="form-control" name="cost" maxlength="16" placeholder="e.g. 12500" pattern="[0-9,]+(\.[0-9]{1,2})?" required>
+              <div class="invalid-feedback">Enter the cost as a number, e.g. 12500.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <script>
-      // Client-side check mirrors the server's: all three fields required, price must be a number
-      document.querySelector('form').addEventListener('submit', (e) => {
-        const f = e.target;
-        f.classList.add('was-validated');
-        if (!f.checkValidity()) { e.preventDefault(); f.querySelector(':invalid')?.focus(); }
+      const form = document.getElementById('bookingForm');
+      const list = document.getElementById('options');
+      const addBtn = document.getElementById('addOption');
+      const MAX = {{ max_booking_options }};
+
+      function renumber() {
+        const opts = list.querySelectorAll('[data-option]');
+        opts.forEach((el, i) => { el.querySelector('[data-num]').textContent = 'Option ' + (i + 1); });
+        if (addBtn) addBtn.classList.toggle('d-none', opts.length >= MAX);
+      }
+      if (addBtn) addBtn.addEventListener('click', () => {
+        const node = document.getElementById('optionTemplate').content.firstElementChild.cloneNode(true);
+        list.appendChild(node);
+        renumber();
+        node.querySelector('input').focus();
       });
+      list.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-remove]');
+        if (btn) { btn.closest('[data-option]').remove(); renumber(); }
+      });
+      // Client-side check mirrors the server's: every field of every option is required, cost must be a number
+      form.addEventListener('submit', (e) => {
+        form.classList.add('was-validated');
+        if (!form.checkValidity()) { e.preventDefault(); form.querySelector(':invalid')?.focus(); }
+      });
+      renumber();
     </script>
     {% endif %}
   {% endif %}

@@ -3,6 +3,7 @@ Travel Accommodation Portal (internal network)
 Flask + pyodbc (SQL Server) + MSAL/Microsoft Graph mail + signed approval links
 """
 import html
+import json
 import logging
 import os
 import re
@@ -80,6 +81,7 @@ ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
 STATUS_BOOKING = "Pending Booking"            # waiting for the Travel Desk to arrange the booking
 STATUS_MANAGER = "Pending Manager Approval"   # booking arranged, waiting for the manager
 DIRECT_NOTE = "No reporting manager on record: approved when the Travel Desk confirmed the booking"
+MAX_BOOKING_OPTIONS = 5  # options the Travel Desk can offer the manager
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 
 app = Flask(__name__)
@@ -232,32 +234,38 @@ def advance_status(request_id, from_status, to_status):
         return won
 
 
-def save_booking(request_id, area, property_name, price, to_status, comment=None):
-    """Store the Travel Desk's booking details and move Pending Booking -> to_status in one atomic update.
-    to_status is Pending Manager Approval, or Approved when there is no reporting manager.
-    Returns True if this call won."""
+def save_booking(request_id, options, to_status, comment=None):
+    """Store the Travel Desk's booking options (JSON) and move Pending Booking -> to_status atomically.
+    to_status is Pending Manager Approval, or Approved when there is no reporting manager - then the single
+    option is also written to BookingArea/PropertyName/Cost as the final booking. Returns True if this call won."""
     approved = to_status == "Approved"
+    sets, args = ["BookingOptions = ?", "Status = ?"], [options_json(options), to_status]
+    if approved:
+        final = options[0]
+        sets += ["BookingArea = ?", "PropertyName = ?", "Cost = ?", "SelectedOption = 1",
+                 "ActionedAt = SYSUTCDATETIME()", "ActionComment = ?"]
+        args += [final["area"], final["property"], final["cost"], comment]
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "UPDATE TravelRequests SET BookingArea = ?, PropertyName = ?, Cost = ?, Status = ?"
-            + (", ActionedAt = SYSUTCDATETIME(), ActionComment = ?" if approved else "")
-            + " WHERE RequestId = ? AND Status = ?",
-            area, property_name, price, to_status, *([comment] if approved else []), request_id, STATUS_BOOKING,
-        )
+        cur.execute(f"UPDATE TravelRequests SET {', '.join(sets)} WHERE RequestId = ? AND Status = ?",
+                    *args, request_id, STATUS_BOOKING)
         won = cur.rowcount == 1
         conn.commit()
         return won
 
 
-def claim_decision(request_id, status, comment, from_status=None):
-    """Atomically move a request awaiting a decision to Approved/Rejected. Returns True if this call won."""
+def claim_decision(request_id, status, comment, from_status=None, option=None, option_no=None):
+    """Atomically move a request awaiting a decision to Approved/Rejected. On approval, the manager's chosen
+    booking option (1-based option_no) becomes the final BookingArea/PropertyName/Cost in the same update.
+    Returns True if this call won."""
+    chosen = ", BookingArea = ?, PropertyName = ?, Cost = ?, SelectedOption = ?" if option else ""
+    chosen_args = [option["area"], option["property"], option["cost"], option_no] if option else []
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE TravelRequests SET Status = ?, ActionedAt = SYSUTCDATETIME(), ActionComment = ?, "
-            "RejectionReason = ? WHERE RequestId = ? AND Status = ?",
-            status, comment, (comment if status == "Rejected" else None), request_id,
+            f"RejectionReason = ?{chosen} WHERE RequestId = ? AND Status = ?",
+            status, comment, (comment if status == "Rejected" else None), *chosen_args, request_id,
             from_status or STATUS_MANAGER,
         )
         won = cur.rowcount == 1
@@ -385,23 +393,38 @@ def details_table_html(r, booking=True):
     )
 
 
-def booking_box_html(r, title="Booking arranged by the Travel Desk"):
-    """The Travel Desk's booking (Place/Area, Property Name, Cost) in a soft, brand-tinted box."""
+def booking_box_html(r, title="Booking arranged by the Travel Desk", rows=None, emphasis=False):
+    """A booking (Place/Area, Property Name, Cost) in a soft, brand-tinted box.
+    rows defaults to the final booking; emphasis=True gives the approved option a stronger border."""
     rows = "".join(
         "<tr>"
         f"<td width='40%' style='width:40%;padding:6px 12px 6px 0;color:#8a5a4c;font-size:13px'>{html.escape(k)}</td>"
         "<td style='padding:6px 0;color:#1d1d1d;font-size:15px;font-weight:700;word-break:break-word'>"
         f"{html.escape(v)}</td></tr>"
-        for k, v in booking_rows(r)
+        for k, v in (rows if rows is not None else booking_rows(r))
     )
+    border = "border:2px solid #c54b36" if emphasis else "border:1px solid #f3dccf"
     return (
-        f"<table {_BOX.format('background:#fdf3ec;border:1px solid #f3dccf')}>"
+        f"<table {_BOX.format('background:#fdf3ec;' + border)}>"
         "<tr><td style='padding:14px 18px;font-family:Segoe UI,Arial,sans-serif'>"
         "<div style='font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#c54b36;"
         f"margin-bottom:6px'>{html.escape(title)}</div>"
         f"<table {_TABLE}>{rows}</table>"
         "</td></tr></table>"
     )
+
+
+def options_html(r, heading_note=""):
+    """Every option the Travel Desk offered, one box each, labelled Option 1, Option 2, ..."""
+    opts = booking_options(r)
+    return "".join(booking_box_html(r, f"Option {i}{heading_note}", option_rows(o)) for i, o in enumerate(opts, 1))
+
+
+def approved_box_html(r, title):
+    """The option the manager approved, highlighted."""
+    n, total = selected_option_no(r), len(booking_options(r))
+    label = f"{title} (Option {n})" if n and total > 1 else title
+    return booking_box_html(r, label, emphasis=True)
 
 
 def reason_box_html(label, text):
@@ -414,9 +437,6 @@ def reason_box_html(label, text):
         f"<div style='font-size:15px;color:#1d1d1d;word-break:break-word'>{html.escape(text)}</div>"
         "</td></tr></table>"
     )
-
-
-app.jinja_env.globals.update(booking_ref=booking_ref, fmt_duration=fmt_duration)  # same values as the emails
 
 
 def email_html(*parts):
@@ -435,12 +455,45 @@ def fmt_inr(amount):
 
 
 def booking_rows(r):
-    """The Travel Desk's booking details as (label, value) pairs."""
+    """The final (approved) booking as (label, value) pairs."""
     return [
         ("Place/Area", r.get("BookingArea") or "-"),
         ("Property Name", r.get("PropertyName") or "-"),
         ("Cost", fmt_inr(r["Cost"]) if r.get("Cost") is not None else "-"),
     ]
+
+
+def options_json(options):
+    return json.dumps([{"area": o["area"], "property": o["property"], "cost": f"{o['cost']:.2f}"} for o in options],
+                      ensure_ascii=False)
+
+
+def booking_options(r):
+    """All options the Travel Desk offered, as [{'area', 'property', 'cost': Decimal}].
+    Requests saved before multiple options existed have just their single booking."""
+    raw = r.get("BookingOptions")
+    if raw:
+        try:
+            return [{"area": o["area"], "property": o["property"], "cost": Decimal(o["cost"])} for o in json.loads(raw)]
+        except (ValueError, KeyError, TypeError, InvalidOperation):
+            log.warning("Unreadable BookingOptions for %s", r.get("RequestId"))
+    if r.get("PropertyName"):
+        return [{"area": r.get("BookingArea") or "", "property": r["PropertyName"], "cost": r.get("Cost") or Decimal(0)}]
+    return []
+
+
+def option_rows(o):
+    return [("Place/Area", o["area"] or "-"), ("Property Name", o["property"] or "-"), ("Cost", fmt_inr(o["cost"]))]
+
+
+def selected_option_no(r):
+    """1-based number of the option the manager approved (1 for single-option and older requests)."""
+    return r.get("SelectedOption") or (1 if r.get("PropertyName") else None)
+
+
+app.jinja_env.globals.update(booking_ref=booking_ref, fmt_duration=fmt_duration, booking_options=booking_options,
+                             option_rows=option_rows, selected_option_no=selected_option_no,
+                             max_booking_options=MAX_BOOKING_OPTIONS)  # same values as the emails
 
 
 # --------------------------------------------------------------------------
@@ -502,16 +555,18 @@ def desk_email_html(r):
 def manager_email_html(r):
     """Step 2 - Manager: the Travel Desk has arranged the booking; approve or reject it."""
     rid = r["RequestId"]
+    n = len(booking_options(r))
+    ask = (f"The Travel Desk has found <b>{n} accommodation options</b>. Please choose one to approve, "
+           "or reject the request." if n > 1 else "Please review and approve or reject the booking.")
     return email_html(
         ref_badge_html(r),
         f"<p>Dear {html.escape(r['ManagerName'])},</p>",
         f"<p>The Travel Desk has arranged tickets and accommodation for {html.escape(r['EmpName'])} "
-        f"({html.escape(r['EmpCode'])}). Please review and approve or reject the booking. "
-        "A reason is required to reject.</p>",
-        booking_box_html(r),
+        f"({html.escape(r['EmpCode'])}). {ask} A reason is required to reject.</p>",
+        options_html(r),
         details_table_html(r, booking=False),
         "<p style='margin:22px 0 8px'>",
-        _email_button("Approve", review_url(rid, "approve"), "#7f8e28"),
+        _email_button("Choose & Approve" if n > 1 else "Approve", review_url(rid, "approve"), "#7f8e28"),
         _email_button("Reject", review_url(rid, "reject"), "#c54b36"),
         "</p>",
         LINK_NOTE,
@@ -670,6 +725,7 @@ def notify_decision(r, new_status, comment):
     trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
     dates = f"{fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}"
     has_booking = bool(r.get("PropertyName"))
+    multi = len(booking_options(r)) > 1
     comment_box = reason_box_html("Manager comment", comment) if (approved and comment and not direct) else ""
 
     if approved:
@@ -681,7 +737,7 @@ def notify_decision(r, new_status, comment):
             f"<p>Dear {html.escape(r['EmpName'])},</p>",
             f"<p>Your trip from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} ({dates}) "
             "is <b>approved</b>." + (" Here is your final booking:" if has_booking else "") + "</p>",
-            booking_box_html(r, "Your booking") if has_booking else "",
+            approved_box_html(r, "Your booking") if has_booking else "",
             comment_box,
             details_table_html(r, booking=False),
         )
@@ -689,8 +745,10 @@ def notify_decision(r, new_status, comment):
         desk_body = email_html(
             ref_badge_html(r),
             "<p>Dear Travel Desk Team,</p>",
-            f"<p>The booking for {who} is <b>approved</b>: {how}. Please confirm the tickets and accommodation.</p>",
-            booking_box_html(r) if has_booking else "",
+            f"<p>The booking for {who} is <b>approved</b>: {how}. "
+            + (f"The manager chose <b>Option {selected_option_no(r)}</b>; please confirm it and release the "
+               "other options." if multi else "Please confirm the tickets and accommodation.") + "</p>",
+            approved_box_html(r, "Approved booking") if has_booking else "",
             comment_box,
             details_table_html(r, booking=False),
         )
@@ -712,7 +770,7 @@ def notify_decision(r, new_status, comment):
             f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
             "<b>Please cancel the tentative tickets and accommodation below.</b></p>",
             reason_box_html("Reason for rejection", comment or "-"),
-            booking_box_html(r, "Booking to cancel") if has_booking else "",
+            options_html(r, " - cancel"),
             details_table_html(r, booking=False),
         )
 
@@ -741,25 +799,37 @@ def _check_link(signer, request_id, template):
     return token, None
 
 
-def parse_booking(form):
-    """Validate the Travel Desk form. Returns (values, errors) - all three fields are required."""
-    area = form.get("booking_area", "").strip()[:150]
-    prop = form.get("property_name", "").strip()[:200]
-    raw_price = form.get("cost", "").replace(",", "").replace("₹", "").strip()
-    errors = {}
-    if not area:
-        errors["booking_area"] = "Enter the place/area of the stay."
-    if not prop:
-        errors["property_name"] = "Enter the property name."
-    price = None
+def _parse_cost(raw):
     try:
-        price = Decimal(raw_price).quantize(Decimal("0.01"))
-        if not (Decimal("0") < price < Decimal("10000000000")):
-            raise InvalidOperation
+        cost = Decimal(raw.replace(",", "").replace("\u20b9", "").strip()).quantize(Decimal("0.01"))
+        return cost if Decimal("0") < cost < Decimal("10000000000") else None
     except (InvalidOperation, ValueError):
-        errors["cost"] = "Enter the cost as a number, e.g. 12500."
-        price = None
-    return {"booking_area": area, "property_name": prop, "cost": raw_price, "price": price}, errors
+        return None
+
+
+def parse_booking_options(form, allow_multiple=True):
+    """Validate the Travel Desk form. Option 1 is required; every extra option row must be complete.
+    Returns (rows for re-display, options, errors) where errors maps 'field-index' -> message."""
+    areas, props, costs = form.getlist("booking_area"), form.getlist("property_name"), form.getlist("cost")
+    n = max(len(areas), len(props), len(costs), 1)
+    rows, options, errors = [], [], {}
+    for i in range(n):
+        area = (areas[i] if i < len(areas) else "").strip()[:150]
+        prop = (props[i] if i < len(props) else "").strip()[:200]
+        raw = (costs[i] if i < len(costs) else "").strip()[:20]
+        rows.append({"booking_area": area, "property_name": prop, "cost": raw})
+        cost = _parse_cost(raw)
+        if not area:
+            errors[f"booking_area-{i}"] = "Enter the place/area of the stay."
+        if not prop:
+            errors[f"property_name-{i}"] = "Enter the property name."
+        if cost is None:
+            errors[f"cost-{i}"] = "Enter the cost as a number, e.g. 12500."
+        options.append({"area": area, "property": prop, "cost": cost})
+    if n > (MAX_BOOKING_OPTIONS if allow_multiple else 1):
+        errors["form"] = (f"You can offer at most {MAX_BOOKING_OPTIONS} options." if allow_multiple else
+                          "This employee has no reporting manager, so only one booking can be entered.")
+    return rows, options, errors
 
 
 @app.get("/desk/<request_id>")
@@ -779,25 +849,24 @@ def travel_desk_confirm(request_id):
     r = load_request(request_id)
     if not r:
         abort(404)
-    page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL,
-                values={"booking_area": r.get("BookingArea") or "", "property_name": r.get("PropertyName") or "",
-                        "cost": f"{r['Cost']:.2f}" if r.get("Cost") is not None else ""},
-                errors={})
+    saved = booking_options(r)  # e.g. after a failed manager email, show what was entered
+    page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL, errors={},
+                rows=[{"booking_area": o["area"], "property_name": o["property"], "cost": f"{o['cost']:.2f}"}
+                      for o in saved] or [{"booking_area": "", "property_name": "", "cost": ""}])
 
     if r["Status"] != STATUS_BOOKING:
         return render_template(template, state="already", **page)
     if request.method == "GET":
         return render_template(template, state="pending", **page)
 
-    values, errors = parse_booking(request.form)
-    page.update(values=values, errors=errors)
+    direct = not r.get("ManagerCode")  # no reporting manager (HOD / senior staff): booking confirmed = approved
+    rows, options, errors = parse_booking_options(request.form, allow_multiple=not direct)
+    page.update(rows=rows, errors=errors)
     if errors:
         return render_template(template, state="pending", **page), 400
 
-    direct = not r.get("ManagerCode")  # no reporting manager (HOD / senior staff): booking confirmed = approved
     to_status = "Approved" if direct else STATUS_MANAGER
-    if not save_booking(request_id, values["booking_area"], values["property_name"], values["price"],
-                        to_status, comment=DIRECT_NOTE if direct else None):
+    if not save_booking(request_id, options, to_status, comment=DIRECT_NOTE if direct else None):
         page["r"] = load_request(request_id)
         return render_template(template, state="already", **page)
     r = page["r"] = load_request(request_id)  # now includes the booking details
@@ -837,10 +906,12 @@ def review(request_id):
         if r["Status"] != STATUS_MANAGER:
             return render_template("review.html", state="already", **page)
         decision = request.args.get("decision", "")
-        return render_template("review.html", state="pending", decision=decision, comment="", **page)
+        return render_template("review.html", state="pending", decision=decision, comment="", picked="", **page)
 
     decision = request.form.get("decision", "").lower()
     comment = request.form.get("comment", "").strip()[:300]
+    picked = request.form.get("option", "")
+    page.update(picked=picked)
     if decision not in ("approve", "reject"):
         return render_template("review.html", state="pending", decision="", comment=comment,
                                error="Choose Approve or Reject.", **page), 400
@@ -848,16 +919,28 @@ def review(request_id):
         return render_template("review.html", state="pending", decision="reject", comment="",
                                error="A reason is required to reject this request.", **page), 400
 
+    option = option_no = None
+    if decision == "approve":
+        options = booking_options(r)
+        if len(options) == 1 and not picked:
+            picked = "1"  # a single option is pre-selected
+        if options:
+            if not (picked.isdigit() and 1 <= int(picked) <= len(options)):
+                return render_template("review.html", state="pending", decision="approve", comment=comment,
+                                       error="Choose which booking option to approve.", **page), 400
+            option_no = int(picked)
+            option = options[option_no - 1]
+
     new_status = "Approved" if decision == "approve" else "Rejected"
-    if not claim_decision(request_id, new_status, comment):
+    if not claim_decision(request_id, new_status, comment, option=option, option_no=option_no):
         page["r"] = load_request(request_id)
         return render_template("review.html", state="already", **page)
 
+    r = page["r"] = load_request(request_id)  # includes the chosen option for the final emails
     try:
         notify_decision(r, new_status, comment)
     except Exception:  # noqa: BLE001
         log.exception("Final emails failed for %s", request_id)
-    page["r"] = load_request(request_id)
     return render_template("review.html", state="done", **page)
 
 if __name__ == "__main__":
