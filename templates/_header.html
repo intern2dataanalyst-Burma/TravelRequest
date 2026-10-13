@@ -1,6 +1,6 @@
 {# Brand header, styled like hungerpangs.com: cream bar, maroon wordmark, terracotta nav text #}
 <header class="hp-header">
-  <a class="hp-brand" href="/" aria-label="Hunger Pangs - Travel Accommodation Portal">
+  <a class="hp-brand" href="{{ url_for('index') }}" aria-label="Hunger Pangs - Travel Accommodation Portal">
     {% if logo_url %}
       <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
     {% else %}
@@ -8,9 +8,9 @@
     {% endif %}
   </a>
   <nav class="hp-nav">
-    <a href="/" class="nav-title {{ 'active' if show_hr_link and not hr_active }}">{{ app_name or 'Travel Accommodation Portal' }}</a>
+    <a href="{{ url_for('index') }}" class="nav-title {{ 'active' if show_hr_link and not hr_active }}">{{ app_name or 'Travel Accommodation Portal' }}</a>
     {% if show_hr_link %}
-      <a href="/user-management" class="{{ 'active' if hr_active }}"><i class="fas fa-users-gear me-1"></i>User Management</a>
+      <a href="{{ url_for('hr_dashboard') }}" class="{{ 'active' if hr_active }}"><i class="fas fa-users-gear me-1"></i>User Management</a>
     {% endif %}
   </nav>
 </header>

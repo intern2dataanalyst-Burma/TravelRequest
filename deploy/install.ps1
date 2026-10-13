@@ -26,9 +26,15 @@ if (-not (Test-Path "$Root\.env")) { throw ".env not found in $Root. Copy it her
 $placeholders = Select-String -Path "$Root\.env" -Pattern '^[A-Z_]+=.*<[A-Z_]+' | ForEach-Object { ($_.Line -split '=')[0] }
 if ($placeholders) { throw ".env still has placeholders: $($placeholders -join ', ')" }
 
-$port = 8080
-$portLine = Select-String -Path "$Root\.env" -Pattern '^PORT=(\d+)' | Select-Object -First 1
-if ($portLine) { $port = [int]$portLine.Matches[0].Groups[1].Value }
+function Get-EnvValue([string]$Name, [string]$Default = '') {
+    $line = Select-String -Path "$Root\.env" -Pattern "^$Name=(.*)$" | Select-Object -First 1
+    if ($line) { return $line.Matches[0].Groups[1].Value.Trim() } else { return $Default }
+}
+$port = [int](Get-EnvValue 'PORT' '8080')
+$bindHost = Get-EnvValue 'HOST' '0.0.0.0'
+$prefix = (Get-EnvValue 'APP_PREFIX' '').Trim('/')
+if ($prefix) { $prefix = '/' + $prefix }
+$publicUrl = Get-EnvValue 'APP_BASE_URL' "http://10.10.30.90:$port"
 
 # --- Python environment ----------------------------------------------------
 if (-not (Test-Path "$Root\.venv\Scripts\python.exe")) {
@@ -43,12 +49,17 @@ Write-Host 'Checking database connection...'
 & "$Root\.venv\Scripts\python.exe" -c "import app; c = app.get_conn(); c.cursor().execute('SELECT TOP 1 1 FROM TravelRequests'); print('Database OK')"
 if ($LASTEXITCODE -ne 0) { throw 'Database check failed (see the error above). Check DB_* values in .env.' }
 
-# --- Firewall: allow the internal network to reach the portal --------------
-$rule = 'Travel Portal (TCP ' + $port + ')'
+# --- Firewall ----------------------------------------------------------------
 Get-NetFirewallRule -DisplayName 'Travel Portal (TCP *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName $rule -Direction Inbound -Protocol TCP -LocalPort $port `
-    -Action Allow -Profile Domain, Private | Out-Null
-Write-Host "Firewall rule added: $rule (Domain/Private networks)"
+if ($bindHost -in @('127.0.0.1', 'localhost', '::1')) {
+    # Behind a reverse proxy on this server: only the proxy talks to the portal, so no inbound rule is needed
+    Write-Host "Portal listens on $bindHost only (reverse proxy in front) - no firewall rule needed"
+} else {
+    $rule = 'Travel Portal (TCP ' + $port + ')'
+    New-NetFirewallRule -DisplayName $rule -Direction Inbound -Protocol TCP -LocalPort $port `
+        -Action Allow -Profile Domain, Private | Out-Null
+    Write-Host "Firewall rule added: $rule (Domain/Private networks)"
+}
 
 # --- Scheduled task: start at boot, restart on failure ---------------------
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -70,8 +81,8 @@ Start-ScheduledTask -TaskName $TaskName
 # --- Verify -----------------------------------------------------------------
 Start-Sleep -Seconds 5
 try {
-    $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$port/healthz" -TimeoutSec 10
-    Write-Host "Portal is running: http://10.10.30.90:$port  (health: $($r.Content))" -ForegroundColor Green
+    $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$port$prefix/healthz" -TimeoutSec 10
+    Write-Host "Portal is running (health: $($r.Content)). Public address: $publicUrl/" -ForegroundColor Green
 } catch {
     Write-Warning "Portal did not answer on port $port. Check $Root\logs\portal.log"
 }

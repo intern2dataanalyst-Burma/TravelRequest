@@ -35,8 +35,18 @@ CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
 # Mailbox the app sends from (the app registration needs Graph Mail.Send for it)
 SENDER_MAILBOX = os.environ.get("SENDER_MAILBOX", "")
 
-# Intranet base URL managers open from the approval email, no trailing slash, e.g. http://10.10.30.90:8080
+# Public base URL of the portal INCLUDING the sub-path, no trailing slash. Every email button is built from it,
+# e.g. http://mingalaba.hungerpangs.com:9000/dashboard/travel
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "").rstrip("/")
+
+# Sub-path the portal is served under, e.g. /dashboard/travel (empty = site root). All routes, static files,
+# redirects and url_for() links get this prefix.
+_prefix = os.environ.get("APP_PREFIX", "").strip().strip("/")
+APP_PREFIX = f"/{_prefix}" if _prefix else ""
+
+# Reverse proxy in front of the portal (e.g. 127.0.0.1 when it runs on this server). Its X-Forwarded-For /
+# X-Forwarded-Proto headers are then trusted, so the portal sees each visitor's real IP (used by User Management).
+TRUSTED_PROXY = os.environ.get("TRUSTED_PROXY", "").strip()
 
 # Waitress bind address. 0.0.0.0 = reachable from the internal network on every interface of this server
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -111,7 +121,38 @@ _desk_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-desk")
 # Signed session cookie for the User Management unlock (HttpOnly; not readable by page scripts)
 app.secret_key = SECRET_KEY
 app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-                  SESSION_COOKIE_NAME="tp_session")
+                  SESSION_COOKIE_NAME="tp_session",
+                  # Scope the cookie to the portal's sub-path so it never mixes with other apps on the same host
+                  SESSION_COOKIE_PATH=APP_PREFIX or "/")
+
+
+class PrefixMiddleware:
+    """Serve the app under APP_PREFIX: /dashboard/travel/review/... reaches the /review/... route, and
+    url_for() builds /dashboard/travel/... links (via SCRIPT_NAME). Anything outside the prefix is 404."""
+
+    def __init__(self, wsgi_app, prefix):
+        self.wsgi_app, self.prefix = wsgi_app, prefix
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path == self.prefix:  # /dashboard/travel -> /dashboard/travel/
+            query = environ.get("QUERY_STRING")
+            start_response("308 Permanent Redirect",
+                           [("Location", self.prefix + "/" + ("?" + query if query else "")), ("Content-Length", "0")])
+            return [b""]
+        if path.startswith(self.prefix + "/"):
+            environ["SCRIPT_NAME"] = environ.get("SCRIPT_NAME", "") + self.prefix
+            environ["PATH_INFO"] = path[len(self.prefix):]
+            return self.wsgi_app(environ, start_response)
+        start_response("404 Not Found", [("Content-Type", "text/plain"), ("Content-Length", "9")])
+        return [b"Not Found"]
+
+
+if APP_PREFIX:
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, APP_PREFIX)
+    if APP_BASE_URL and not APP_BASE_URL.endswith(APP_PREFIX):
+        log.warning("APP_BASE_URL (%s) should end with APP_PREFIX (%s) or email links will miss the sub-path",
+                    APP_BASE_URL, APP_PREFIX)
 
 
 # --------------------------------------------------------------------------
@@ -985,6 +1026,10 @@ def _hr_networks():
 
 
 def hr_network_allowed(ip):
+    if TRUSTED_PROXY and ip == TRUSTED_PROXY:
+        # The proxy did not pass X-Forwarded-For, so the real visitor is unknown: refuse rather than trust it
+        log.warning("User Management: no X-Forwarded-For from proxy %s; refusing", ip)
+        return False
     nets = _hr_networks()
     if nets is None:
         return True
@@ -1281,6 +1326,10 @@ def hr_lookup(code):
 
 if __name__ == "__main__":
     from waitress import serve
-    print(f"Serving Travel Accommodation Portal on http://{HOST}:{PORT} (links use {APP_BASE_URL or 'APP_BASE_URL not set'})",
-          flush=True)
-    serve(app, host=HOST, port=PORT, threads=8)
+    proxy = ({"trusted_proxy": TRUSTED_PROXY, "trusted_proxy_count": 1, "clear_untrusted_proxy_headers": True,
+              "trusted_proxy_headers": {"x-forwarded-for", "x-forwarded-proto", "x-forwarded-host"}}
+             if TRUSTED_PROXY else {})
+    print(f"Serving Travel Accommodation Portal on http://{HOST}:{PORT}{APP_PREFIX}/ "
+          f"(links use {APP_BASE_URL or 'APP_BASE_URL not set'}"
+          f"{', behind proxy ' + TRUSTED_PROXY if TRUSTED_PROXY else ''})", flush=True)
+    serve(app, host=HOST, port=PORT, threads=8, **proxy)

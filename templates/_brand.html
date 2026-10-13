@@ -28,7 +28,7 @@
   .hp-header { background: #fff; border-bottom: 1px solid var(--hp-line); display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; height: 56px; padding: 0 24px; }
   .hp-brand { display: block; flex: 0 1 auto; min-width: 0; text-decoration: none; }
   .hp-wordmark { display: block; width: 286px; height: 18px; max-width: 100%; background: var(--hp-maroon);
-    -webkit-mask: url("/static/hp-wordmark.png") 0 0 / 100% 100% no-repeat; mask: url("/static/hp-wordmark.png") 0 0 / 100% 100% no-repeat; }
+    -webkit-mask: url("{{ url_for('static', filename='hp-wordmark.png') }}") 0 0 / 100% 100% no-repeat; mask: url("{{ url_for('static', filename='hp-wordmark.png') }}") 0 0 / 100% 100% no-repeat; }
   .hp-logo-img { height: 36px; width: auto; display: block; }
   .hp-nav { display: flex; align-items: center; gap: 32px; }
   .hp-nav a { font-family: var(--hp-display); font-weight: 600; font-size: 16px; color: var(--hp-terracotta); text-decoration: none; white-space: nowrap; padding: 4px 0; border-bottom: 2px solid transparent; }

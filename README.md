@@ -2,7 +2,7 @@
 
 Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.30.90** alongside SQL Server `MingalabaDB`.
 
-**URL:** `http://<Public-IP>:9000` from anywhere (the company router forwards port 9000 to 10.10.30.90), or `http://10.10.30.90:9000` in the office. Email links use `APP_BASE_URL` from `.env`.
+**URL:** http://mingalaba.hungerpangs.com:9000/dashboard/travel/ (the `/dashboard/` root is left free for a future central menu). Email links are built from `APP_BASE_URL` in `.env`.
 
 ## How it works
 
@@ -22,6 +22,44 @@ Database migrations (run once each, in order; all applied on MingalabaDB, 001-00
 - `deploy/migrate_004_booking_options.sql` adds `BookingOptions` (JSON list of the Travel Desk's options) and `SelectedOption` (the one the manager approved).
 - `deploy/migrate_005_travel_approver_mapping.sql` creates `TravelApproverMapping` (the portal's own routing table) and seeds it once from `checklist_empmanager_mapping`.
 
+## Deploying under /dashboard/travel (behind the Mingalaba app on port 9000)
+
+Port 9000 on `mingalaba.hungerpangs.com` is served by the Mingalaba app, so the portal cannot listen on it too. The portal runs on an internal port, and whatever serves port 9000 forwards `/dashboard/travel/` to it (a reverse proxy).
+
+`.env` on the server:
+
+```ini
+APP_BASE_URL=http://mingalaba.hungerpangs.com:9000/dashboard/travel   # public URL incl. sub-path, no trailing slash
+APP_PREFIX=/dashboard/travel                                          # must match the end of APP_BASE_URL
+HOST=127.0.0.1                                                        # only the proxy on this server reaches the portal
+PORT=8090                                                             # internal port (any free one)
+TRUSTED_PROXY=127.0.0.1                                               # the proxy's address: trust its X-Forwarded-For
+```
+
+The proxy must forward the **full path** (do not strip `/dashboard/travel`) and send `X-Forwarded-For`. Examples:
+
+**IIS** (URL Rewrite + Application Request Routing, ARR proxy enabled; ARR adds X-Forwarded-For by default), in the site that serves port 9000:
+
+```xml
+<rule name="Travel Portal" stopProcessing="true">
+  <match url="^dashboard/travel(/.*)?$" />
+  <action type="Rewrite" url="http://127.0.0.1:8090/dashboard/travel{R:1}" />
+</rule>
+```
+
+**nginx**:
+
+```nginx
+location /dashboard/travel/ {
+    proxy_pass http://127.0.0.1:8090;           # no path here: keeps /dashboard/travel/... intact
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Check: `http://mingalaba.hungerpangs.com:9000/dashboard/travel/healthz` returns `ok`. User Management refuses requests where the proxy did not pass the visitor's IP.
+
 ## User Management (HR)
 
 The **User Management** tab lets HR add, edit and delete rows in `dbo.TravelApproverMapping`, the portal's own table that decides who approves each employee's travel. Changes apply to new requests immediately.
@@ -36,7 +74,7 @@ The **User Management** tab lets HR add, edit and delete rows in `dbo.TravelAppr
 
 ## Security note (public IP over HTTP)
 
-The portal is reachable from the internet on plain `http://`. Passwords (portal login, HR password) and approval links travel unencrypted, so anyone on the network path (public Wi-Fi, mobile carrier) can read them. Put HTTPS in front before wide use: e.g. a company domain with a certificate on IIS (reverse proxy to port 9000), or ask IT for their preferred TLS setup. Then set `APP_BASE_URL` to the `https://` address.
+The portal is reachable from the internet on plain `http://`. Passwords (portal login, HR password) and approval links travel unencrypted, so anyone on the network path (public Wi-Fi, mobile carrier) can read them. Put HTTPS in front before wide use: e.g. a company domain with a certificate on IIS (the proxy in front of the portal), or ask IT for their preferred TLS setup. Then set `APP_BASE_URL` to the `https://` address.
 
 ## Deploy on 10.10.30.90
 
@@ -48,7 +86,7 @@ Prerequisites on the server: Python 3.10+ (installed for all users, on PATH) and
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\deploy\install.ps1
    ```
-   The script installs packages into `.venv`, checks the database connection, opens the `PORT` from `.env` (9000) in Windows Firewall (Domain/Private networks), and registers a `TravelPortal` scheduled task that starts the portal at boot and restarts it if it stops.
+   The script installs packages into `.venv`, checks the database connection, opens the `PORT` from `.env` in Windows Firewall (Domain/Private networks) unless `HOST=127.0.0.1` (behind the proxy, no rule is needed), and registers a `TravelPortal` scheduled task that starts the portal at boot and restarts it if it stops.
 
 ## Operate
 
@@ -57,6 +95,6 @@ Prerequisites on the server: Python 3.10+ (installed for all users, on PATH) and
 | Status | `Get-ScheduledTask TravelPortal` |
 | Restart (e.g. after editing `.env` or updating code) | `powershell -ExecutionPolicy Bypass -File .\deploy\restart.ps1` |
 | Logs | `Get-Content .\logs\portal.log -Tail 50 -Wait` |
-| Health check | `Invoke-WebRequest http://127.0.0.1:9000/healthz` |
+| Health check | `Invoke-WebRequest http://127.0.0.1:8090/dashboard/travel/healthz` |
 
-To run it in the foreground for troubleshooting, stop the task (`Stop-ScheduledTask TravelPortal`, then end any `python.exe` still holding port 9000) and run `.\.venv\Scripts\python app.py` instead.
+To run it in the foreground for troubleshooting, stop the task (`Stop-ScheduledTask TravelPortal`, then end any `python.exe` still holding the portal's `PORT`) and run `.\.venv\Scripts\python app.py` instead.
