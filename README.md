@@ -7,7 +7,7 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
 ## How it works
 
 1. **Employee submits** the form. Name, designation and department come from `tblEmployeeMaster`; the manager from `dbo.checklist_empmanager_mapping`. Status: `Pending Booking`.
-2. **Travel Desk books.** The Travel Desk (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with a **Booking Arranged - Send to Manager** button. It opens a form where they enter Place/Area, Property Name and Cost; submitting sets `Pending Manager Approval` and emails the manager the booking.
+2. **Travel Desk books.** The Travel Desk (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with an **Enter Booking Details** button. It opens a form where they enter Place/Area, Property Name and Cost; **Save & Send for Approval** sets `Pending Manager Approval` and emails the manager the booking.
 3. **Manager approves.** The manager's email has **Approve** and **Reject** buttons that open a review page on the portal. A reason is required to reject.
 4. **Final emails** go to the employee and the Travel Desk: `Approved`, or `Rejected` with the reason (the Travel Desk is asked to cancel the tentative booking).
 
