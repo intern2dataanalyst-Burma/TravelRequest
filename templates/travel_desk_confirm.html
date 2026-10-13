@@ -47,7 +47,7 @@
         {% if direct %}
           Booking saved. The request is <strong>approved</strong> (no reporting manager on record), and the employee has been notified.
         {% else %}
-          Booking saved and sent to <strong>{{ r.ManagerName }}</strong> for approval. You will get an email once they approve or reject it.
+          Booking saved and sent for approval.
         {% endif %}
       </div></div>
     {% elif state == 'already' %}
@@ -61,6 +61,7 @@
       {% for label, value in [
           ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
+          ('Duration', fmt_duration(r.FromDate, r.ToDate)),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
           ('Preferred Location', r.PreferredLocation or '-'),
           ('Approving manager', r.ManagerName or 'None (no reporting manager on record)')] %}

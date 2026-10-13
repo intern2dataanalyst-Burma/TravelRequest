@@ -339,6 +339,13 @@ def ref_badge_html(r):
             f"Booking Ref: {html.escape(booking_ref(r))}</span></p>")
 
 
+def fmt_duration(from_date, to_date):
+    """'3 nights, 4 days' - same wording as the form's Trip summary."""
+    nights = (to_date - from_date).days
+    days = nights + 1
+    return f"{nights} night{'' if nights == 1 else 's'}, {days} day{'' if days == 1 else 's'}"
+
+
 def details_table_html(r, booking=True):
     """Employee and trip details. booking=False leaves out the Travel Desk's booking (shown in its own box)."""
     rows = [
@@ -349,6 +356,7 @@ def details_table_html(r, booking=True):
         ("Department", r["Department"]),
         ("From (Date)", fmt_date(r["FromDate"])),
         ("To (Date)", fmt_date(r["ToDate"])),
+        ("Duration", fmt_duration(r["FromDate"], r["ToDate"])),
         ("Travelling From", r["PlaceFrom"]),
         ("Travelling To", r["PlaceTo"]),
         ("Reason of Travel", r.get("ReasonOfTravel") or "-"),
@@ -357,16 +365,24 @@ def details_table_html(r, booking=True):
     ]
     if booking and r.get("PropertyName"):
         rows += booking_rows(r)
+    last = len(rows) - 1
     body = "".join(
         "<tr>"
-        "<td width='40%' style='width:40%;padding:9px 12px 9px 0;border-bottom:1px solid #efe7d5;color:#7a6f66;"
-        f"font-size:13px;vertical-align:top'>{html.escape(k)}</td>"
-        "<td style='padding:9px 0;border-bottom:1px solid #efe7d5;color:#1d1d1d;font-size:14px;font-weight:600;"
-        f"vertical-align:top;word-break:break-word'>{html.escape(str(v))}</td>"
+        f"<td width='40%' style='width:40%;padding:10px 14px;background:#f6efe6;color:#6b5a4e;font-size:13px;"
+        f"font-weight:600;vertical-align:top;{'' if i == last else 'border-bottom:1px solid #ece2d6;'}'>"
+        f"{html.escape(k)}</td>"
+        f"<td style='padding:10px 14px;color:#3b2f2a;font-size:14px;font-weight:600;vertical-align:top;"
+        f"word-break:break-word;{'' if i == last else 'border-bottom:1px solid #ece2d6;'}'>{html.escape(str(v))}</td>"
         "</tr>"
-        for k, v in rows
+        for i, (k, v) in enumerate(rows)
     )
-    return f"<table {_TABLE}>{body}</table>"
+    # Rounded warm card; overflow:hidden keeps the tinted label column inside the rounded corners
+    return (
+        "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+        "style='width:100%;max-width:600px;border-collapse:separate;border-spacing:0;background:#fdfaf6;"
+        "border:1px solid #e6ddd3;border-radius:12px;overflow:hidden;font-family:Segoe UI,Arial,sans-serif'>"
+        f"{body}</table>"
+    )
 
 
 def booking_box_html(r, title="Booking arranged by the Travel Desk"):
@@ -400,7 +416,7 @@ def reason_box_html(label, text):
     )
 
 
-app.jinja_env.globals["booking_ref"] = booking_ref  # templates show the same reference
+app.jinja_env.globals.update(booking_ref=booking_ref, fmt_duration=fmt_duration)  # same values as the emails
 
 
 def email_html(*parts):
@@ -466,14 +482,15 @@ def _email_button(label, url, color):
 def desk_email_html(r):
     """Step 1 - Travel Desk: arrange the booking, then send it to the manager."""
     direct = not r.get("ManagerCode")
-    then = ("This employee has <b>no reporting manager on record</b>, so confirming will approve the request."
+    then = ("Once arranged, click <b>Enter Booking Details</b> to add the booking. This employee has "
+            "<b>no reporting manager on record</b>, so saving it approves the request."
             if direct else
-            f"Once arranged, click the button to send the booking to <b>{html.escape(r['ManagerName'])}</b> "
-            "for approval.")
-    label = "Booking Arranged - Confirm" if direct else "Booking Arranged - Send to Manager"
+            "Once arranged, click <b>Enter Booking Details</b> to add the booking and send it to "
+            f"<b>{html.escape(r['ManagerName'])}</b> for approval.")
+    label = "Enter Booking Details"
     return email_html(
         ref_badge_html(r),
-        "<p>Dear Sagar, Jigna and Mittal,</p>",
+        "<p>Dear Travel Desk Team,</p>",
         f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a travel request. "
         f"Please arrange tickets and accommodation. {then}</p>",
         details_table_html(r),
@@ -640,8 +657,6 @@ def submit_travel():
         "requestId": str(req["RequestId"]),
         "bookingRef": booking_ref(req),
         "needsApproval": emp["NeedsApproval"],
-        "message": "Request submitted. The Travel Desk has been asked to arrange your booking"
-                   + (f"; {req['ManagerName']} will then approve it." if emp["NeedsApproval"] else "."),
     })
 
 
@@ -673,7 +688,7 @@ def notify_decision(r, new_status, comment):
         desk_subject = with_ref(r, f"Approved: travel booking for {r['EmpName']} ({r['EmpCode']}) - {trip}")
         desk_body = email_html(
             ref_badge_html(r),
-            "<p>Dear Sagar, Jigna and Mittal,</p>",
+            "<p>Dear Travel Desk Team,</p>",
             f"<p>The booking for {who} is <b>approved</b>: {how}. Please confirm the tickets and accommodation.</p>",
             booking_box_html(r) if has_booking else "",
             comment_box,
@@ -693,7 +708,7 @@ def notify_decision(r, new_status, comment):
         desk_subject = with_ref(r, f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}")
         desk_body = email_html(
             ref_badge_html(r),
-            "<p>Dear Sagar, Jigna and Mittal,</p>",
+            "<p>Dear Travel Desk Team,</p>",
             f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
             "<b>Please cancel the tentative tickets and accommodation below.</b></p>",
             reason_box_html("Reason for rejection", comment or "-"),

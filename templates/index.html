@@ -202,11 +202,10 @@
     <!-- Success view -->
     <div id="successView" class="d-none">
       <div class="hp-card hp-card-pad mx-auto" style="max-width: 720px;">
-        <div class="d-flex gap-3 align-items-start mb-4">
+        <div class="d-flex gap-3 align-items-center mb-4">
           <div class="success-icon"><i class="fas fa-check"></i></div>
           <div class="flex-grow-1">
-            <h1 class="h4 fw-bold mb-1">Request submitted</h1>
-            <div style="color: var(--hp-muted)" id="successMsg"></div>
+            <h1 class="h4 fw-bold mb-0">Request submitted</h1>
           </div>
           <span class="pill" id="successBadge"></span>
         </div>
@@ -374,11 +373,11 @@
             ['Designation', fd.get('designation')], ['Department', fd.get('department')],
             ['Travelling From', fd.get('place_from')], ['Travelling To', fd.get('place_to')],
             ['From (Date)', fmt(fd.get('from_date'))], ['To (Date)', fmt(fd.get('to_date'))],
+            ['Duration', $('tripNights').textContent],
             ['Reason of Travel', fd.get('travel_reason')],
             ['Category of Room', fd.get('room_category')], ['Preferred Location', fd.get('preferred_location') || '-'],
           ];
           $('summaryList').innerHTML = rows.map(r => `<div class="summary-row"><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join('');
-          $('successMsg').textContent = data.message;
           $('refId').textContent = data.bookingRef || data.requestId;
           const badge = $('successBadge');
           badge.className = 'pill pill-pending';

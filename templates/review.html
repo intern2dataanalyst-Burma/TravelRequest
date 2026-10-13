@@ -54,9 +54,7 @@
         <i class="fas {{ 'fa-circle-info' if state == 'already' else 'fa-circle-check' if ok else 'fa-circle-xmark' }}"></i>
         <div>
           {% if state == 'done' %}
-            The booking has been <strong>{{ r.Status | lower }}</strong>.
-            {{ 'The employee and the Travel Desk have been notified.' if ok
-               else 'The employee has been notified, and the Travel Desk has been asked to cancel the tentative booking.' }}
+            {{ 'Booking approved.' if ok else 'Booking rejected.' }}
           {% else %}
             This request was already <strong>{{ r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
           {% endif %}
@@ -84,6 +82,7 @@
       {% for label, value in [
           ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
+          ('Duration', fmt_duration(r.FromDate, r.ToDate)),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
           ('Preferred Location', r.PreferredLocation or '-')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
