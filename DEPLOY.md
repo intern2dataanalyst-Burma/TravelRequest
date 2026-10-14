@@ -18,7 +18,7 @@ On 10.10.30.90:
 | ODBC Driver 18 for SQL Server | `Get-OdbcDriver -Name "ODBC Driver 18 for SQL Server"` | Download from Microsoft ("ODBC Driver 18 for SQL Server") and install |
 | IIS URL Rewrite + Application Request Routing (ARR) | Already used by Mingalaba on port 9000 | Nothing to do |
 
-Database: migrations 001 to 005 are **already applied** to MingalabaDB. **Migration 006** (`deploy/migrate_006_hotel_booking.sql`: the Preferred Hotel column and the voucher table) must be applied before this version runs; it is safe to re-run. Open it in SQL Server Management Studio connected to MingalabaDB and click **Execute**.
+The database changes (migrations 001 to 006) are **already applied** to MingalabaDB (006 on 2026-10-14). Do not run them again (they are safe to re-run, but not needed).
 
 ---
 

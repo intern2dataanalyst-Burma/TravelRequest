@@ -22,13 +22,13 @@ All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Me
 
 (The `.env` settings `TRAVEL_DESK_TO` / `TRAVEL_DESK_CC` keep their old names and hold the Admin Team addresses.)
 
-Database migrations (run once each, in order; 001-003 applied on 2026-10-12, 004-005 on 2026-10-13):
+Database migrations (run once each, in order; 001-003 applied on 2026-10-12, 004-005 on 2026-10-13, 006 on 2026-10-14):
 - `deploy/migrate_001_status_length.sql` widens `TravelRequests.Status` to `nvarchar(30)`.
 - `deploy/migrate_002_booking_details.sql` adds `BookingArea`, `PropertyName` and `Cost` (the approved booking: Place/Area, Hotel, Total Cost).
 - `deploy/migrate_003_booking_ref.sql` adds `BookingRefID` (auto-numbered from 10001), shown as "Booking Ref: #10001" in emails.
 - `deploy/migrate_004_booking_options.sql` adds `BookingOptions` (JSON list of the Admin Team's choices, including the Admin Team only fields) and `SelectedOption` (the one the manager approved).
 - `deploy/migrate_005_travel_approver_mapping.sql` creates `TravelApproverMapping` (the portal's own routing table) and seeds it once from `checklist_empmanager_mapping`.
-- `deploy/migrate_006_hotel_booking.sql` adds `TravelRequests.PreferredHotel` and creates `TravelBookingVouchers` (the uploaded PDF vouchers). **Required by this version.**
+- `deploy/migrate_006_hotel_booking.sql` adds `TravelRequests.PreferredHotel` and creates `TravelBookingVouchers` (the uploaded PDF vouchers).
 
 ## Deploying under /dashboard/travel (behind the Mingalaba app on port 9000)
 
