@@ -9,7 +9,7 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
 1. **Employee submits** a hotel booking request. Name, designation and department come from `tblEmployeeMaster`; the manager from the portal's own routing table `dbo.TravelApproverMapping` (maintained by HR in User Management). Section 3 "Occupancy" has the room category, preferred location and an optional preferred hotel. Status: `Pending Booking`.
 2. **Admin Team proposes.** The Admin Team (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with an **Enter Booking Details** button. It opens a form with one or more choices (up to 5): Place/Area, Hotel, Total Cost of stay with GST (approx), plus **Admin Team only** fields: Type of occupancy, Refund status (Refundable / Non-refundable / Partial refundable) and optional Remarks. **Save & Send for Approval** sets `Pending Manager Approval` and emails the manager.
 3. **Manager approves.** The manager never sees the Admin Team only fields.
-   - One choice: the email shows the booking with no "Choice 1" label, and **Approve** approves in one click (the link opens a page that submits the approval immediately; the email states that an approved booking is non-refundable).
+   - One choice: the email shows the booking with no "Choice 1" label. **Approve** opens a minimal confirm page (hotel, cost, the non-refundable tick-box and one **Confirm Approval** button). Opening the link changes nothing, so enterprise link scanners cannot approve by accident.
    - Several choices: **Choose & Approve** opens the review page, where the manager picks Choice 1, 2, ... and must tick "I acknowledge that once approved, this booking is non-refundable." There is no comment box for approvals.
    - **Reject** always requires a reason.
    Approval sets `Pending Final Booking`.
@@ -18,7 +18,7 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
 
 Employees with no reporting manager on record skip step 3: the Admin Team's confirmation approves the request and goes straight to step 4.
 
-All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Messages). The links are signed with `SECRET_KEY` (separate keys for the Admin Team booking form, the manager review and the voucher upload) and expire after `REVIEW_LINK_MAX_AGE_DAYS` (30 by default). Opening a link changes nothing on the server except the manager's 1-click Approve, whose page submits the approval itself.
+All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Messages). The links are signed with `SECRET_KEY` (separate keys for the Admin Team booking form, the manager review and the voucher upload) and expire after `REVIEW_LINK_MAX_AGE_DAYS` (30 by default). Opening a link never changes anything; the action is recorded only when the page's button is pressed.
 
 (The `.env` settings `TRAVEL_DESK_TO` / `TRAVEL_DESK_CC` keep their old names and hold the Admin Team addresses.)
 

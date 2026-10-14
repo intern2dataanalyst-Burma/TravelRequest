@@ -69,23 +69,36 @@
     </div>
 
     {% if state == 'quick' %}
-      {# 1-click Approve from the email (single choice): approves as soon as the page opens #}
-      <form method="post" id="quickForm" class="hp-card hp-card-pad text-center mb-3">
+      {# Approve from the email (single choice): a minimal confirm page. Opening it changes nothing, so mail
+         link scanners cannot approve; the manager confirms with one button. #}
+      <form method="post" id="quickForm" class="hp-card hp-card-pad mb-3" novalidate>
+        <h2 class="card-title">Approve this booking</h2>
+        {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
         <input type="hidden" name="t" value="{{ token }}">
         <input type="hidden" name="decision" value="approve">
         <input type="hidden" name="option" value="1">
-        <input type="hidden" name="ack" value="yes">
-        <div class="spinner-border mb-3" id="quickSpin" style="color: var(--hp-olive)" role="status"></div>
-        <h2 class="h5 fw-bold mb-2" id="quickTitle">Approving the booking...</h2>
-        <p class="help mb-3">By approving, you acknowledge that once approved, this booking is non-refundable.</p>
-        <button type="submit" class="btn btn-hp" id="quickBtn"><i class="fas fa-check me-1"></i> Approve now</button>
+        <input type="hidden" name="quick" value="1">
+        <div class="opt-card static chosen mb-3">
+          {% for label, value in option_rows(opts[0]) if label != 'Place/Area' %}
+            <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+          {% endfor %}
+        </div>
+        <label class="ack" id="ackBox" for="ack">
+          <input type="checkbox" id="ack" name="ack" value="yes" required>
+          <span>I acknowledge that once approved, this booking is non-refundable.<span class="req">*</span></span>
+        </label>
+        <button type="submit" class="btn btn-hp w-100 mt-3" id="quickBtn"><i class="fas fa-check me-1"></i> Confirm Approval</button>
+        <p class="help text-center mt-3 mb-0"><a href="{{ url_for('review', request_id=r.RequestId, t=token, decision='reject') }}" style="color: var(--hp-muted)">View trip details or reject instead</a></p>
       </form>
       <script>
-        // Submit straight away; the button stays as a fallback if scripts are blocked
-        document.getElementById('quickBtn').classList.add('d-none');
-        document.getElementById('quickForm').submit();
+        const ack = document.getElementById('ack'), ackBox = document.getElementById('ackBox');
+        ack.addEventListener('change', () => ackBox.classList.remove('is-invalid'));
+        document.getElementById('quickForm').addEventListener('submit', (e) => {
+          if (!ack.checked) { e.preventDefault(); ackBox.classList.add('is-invalid'); return; }
+          const btn = document.getElementById('quickBtn');
+          btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Approving...';
+        });
       </script>
-      <noscript><style>#quickSpin { display: none; } #quickBtn { display: inline-block !important; }</style></noscript>
     {% endif %}
 
     {% if state == 'done' or state == 'already' %}

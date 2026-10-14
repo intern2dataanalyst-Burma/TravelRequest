@@ -95,7 +95,7 @@ From any PC or phone:
 Then do one full test request:
 1. Submit a request with your own Emp Code.
 2. The Admin Team email arrives. Click **Enter Booking Details**, fill in a choice (including the Admin Team only fields), and click **Save & Send for Approval**.
-3. The manager email arrives. Click **Approve** (one click for a single choice).
+3. The manager email arrives. Click **Approve**, tick the non-refundable box and click **Confirm Approval**.
 4. The Admin Team gets "Approved - final booking needed". Click **Upload Booking Voucher** and upload a PDF.
 5. The employee receives the voucher as an attachment, with the manager in CC.
 

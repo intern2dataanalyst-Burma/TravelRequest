@@ -676,7 +676,7 @@ def desk_url(request_id):
 
 
 def review_url(request_id, decision, quick=False):
-    """quick=True: the 1-click Approve button (single choice) - the page approves as soon as it opens."""
+    """quick=True: the Approve button for a single choice - opens the minimal confirm page."""
     url = f"{APP_BASE_URL}/review/{request_id}?t={make_token(_review_signer, request_id)}&decision={decision}"
     return url + "&quick=1" if quick else url
 
@@ -731,8 +731,8 @@ def manager_email_html(r):
     else:
         ask = "Please approve or reject the booking below. A reason is required to reject."
         approve = _email_button("Approve", review_url(rid, "approve", quick=True), "#7f8e28")
-        note = ("<p style='color:#7a6f66;font-size:12px'><b>Approve</b> approves the booking in one click. "
-                "By approving, you acknowledge that once approved, this booking is non-refundable.</p>")
+        note = ("<p style='color:#7a6f66;font-size:12px'><b>Approve</b> opens a short page where you confirm "
+                "the approval. Once approved, this booking is non-refundable.</p>")
     return email_html(
         ref_badge_html(r),
         f"<p>Dear {html.escape(r['ManagerName'])},</p>",
@@ -1108,8 +1108,9 @@ def travel_desk_confirm(request_id):
 
 @app.route("/review/<request_id>", methods=["GET", "POST"])
 def review(request_id):
-    """Step 2 - manager approves or rejects. GET only shows the page; POST decides. For a single choice, the
-    email's Approve button opens the page with quick=1, which submits the approval straight away."""
+    """Step 2 - manager approves or rejects. GET only shows the page (safe for mail link scanners); POST decides.
+    For a single choice, the email's Approve button opens a minimal confirm page (quick=1): the hotel and cost,
+    the non-refundable tick-box and one Confirm Approval button."""
     token, err = _check_link(_review_signer, request_id, "review.html")
     if err:
         return err
@@ -1150,7 +1151,8 @@ def review(request_id):
             option_no = int(picked)
             option = opts[option_no - 1]
         if not acknowledged:
-            return render_template("review.html", state="pending", decision="approve", comment="",
+            quick = request.form.get("quick") == "1" and len(opts) == 1  # stay on the minimal confirm page
+            return render_template("review.html", state="quick" if quick else "pending", decision="approve", comment="",
                                    error="Tick the box to acknowledge that the booking is non-refundable once "
                                          "approved.", **page), 400
 
