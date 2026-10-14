@@ -115,6 +115,9 @@ DIRECT_NOTE = "No reporting manager on record: approved when the Admin Team conf
 MAX_BOOKING_OPTIONS = 5  # choices the Admin Team can offer the manager
 MAX_VOUCHER_BYTES = 3 * 1024 * 1024  # Graph sendMail takes attachments up to 3 MB in a single request
 VOUCHER_TABLE = "dbo.TravelBookingVouchers"
+# Every uploaded voucher is also saved as a file on the server: <VOUCHER_DIR>/<YYYY-MM>/<ref>_<file name>.pdf
+VOUCHER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           os.environ.get("VOUCHER_DIR", "vouchers"))
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 
 app = Flask(__name__)
@@ -363,6 +366,17 @@ def save_voucher(request_id, file_name, content):
         return True
 
 
+def save_voucher_file(r, file_name, content):
+    """Keep a copy of the voucher in the server's voucher folder, one sub-folder per month. Returns the path.
+    A re-upload for the same booking replaces the earlier file."""
+    folder = os.path.join(VOUCHER_DIR, datetime.now().strftime("%Y-%m"))
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{booking_ref(r).lstrip('#')}_{file_name}")
+    with open(path, "wb") as f:
+        f.write(content)
+    return path
+
+
 def load_voucher(request_id):
     """(file name, PDF bytes, uploaded at UTC) or None."""
     with get_conn() as conn:
@@ -453,8 +467,9 @@ def booking_ref(r):
     return "#" + str(r["RequestId"])[:8].upper()
 
 
-def with_ref(r, subject):
-    return f"Booking Ref: {booking_ref(r)} - {subject}"
+def subject_line(r, status):
+    """Every email subject, e.g. 'Hotel Booking for Kaustubh Kishor Welde - Ref #10013 - Pending Manager Approval'."""
+    return f"Hotel Booking for {r['EmpName']} - Ref {booking_ref(r)} - {status}"
 
 
 # Email building blocks. Inline styles only (email clients ignore <style> blocks); tables are 100% wide up to
@@ -746,16 +761,15 @@ def manager_email_html(r):
 def final_booking_email_html(r):
     """Step 3 - Admin Team: the booking is approved; book it and upload the voucher."""
     direct = not r.get("ManagerCode")
-    multi = len(booking_options(r)) > 1
-    how = ("no manager approval was required (no reporting manager on record)" if direct
-           else f"approved by {html.escape(r['ManagerName'])}")
-    chose = (f" The manager chose <b>{selected_option_no(r)}</b>; please release the others."
-             if multi else "")
+    who = f"{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])})"
+    approved = (f"<p>The hotel booking for {who} is <b>approved</b> (no manager approval was required: no "
+                "reporting manager on record).</p>" if direct else
+                f"<p>The hotel booking for {who} is <b>approved</b> by {html.escape(r['ManagerName'])}. "
+                "The manager chose the booking below. Please continue with it.</p>")
     return email_html(
         ref_badge_html(r),
         "<p>Dear Admin Team,</p>",
-        f"<p>The hotel booking for {html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) is <b>approved</b>: "
-        f"{how}.{chose}</p>",
+        approved,
         "<p>Please make the final booking, then click <b>Upload Booking Voucher</b> to email the voucher (PDF).</p>",
         approved_box_html(r, "Approved booking", admin=True),
         details_table_html(r, booking=False),
@@ -911,8 +925,7 @@ def submit_travel():
     try:
         send_mail(
             TRAVEL_DESK_TO,
-            with_ref(req, f"Hotel booking request: {req['EmpName']} ({req['EmpCode']}) - "
-                          f"{req['PlaceFrom']} to {req['PlaceTo']}"),
+            subject_line(req, "Pending Booking"),
             desk_email_html(req),
             cc=TRAVEL_DESK_CC,
         )
@@ -932,9 +945,8 @@ def submit_travel():
 def notify_approval(r):
     """Approved (by the manager, or no manager needed): the Admin Team makes the final booking and uploads the
     voucher. The employee hears next when the voucher is emailed."""
-    trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
     send_mail(TRAVEL_DESK_TO,
-              with_ref(r, f"Approved - final booking needed: {r['EmpName']} ({r['EmpCode']}) - {trip}"),
+              subject_line(r, "Approved - Pending Final Booking"),
               final_booking_email_html(r), cc=TRAVEL_DESK_CC)
 
 
@@ -942,9 +954,8 @@ def notify_rejection(r, comment):
     """Rejected: separate emails to the employee (with the manager's reason) and the Admin Team (cancel the
     tentative booking)."""
     who = f"{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])})"
-    trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
     dates = f"{fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}"
-    emp_subject = with_ref(r, "Your hotel booking request was rejected")
+    emp_subject = subject_line(r, "Rejected")
     emp_body = email_html(
         ref_badge_html(r),
         f"<p>Dear {html.escape(r['EmpName'])},</p>",
@@ -954,7 +965,7 @@ def notify_rejection(r, comment):
         reason_box_html("Reason for rejection", comment or "-"),
         details_table_html(r, booking=False),
     )
-    desk_subject = with_ref(r, f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}")
+    desk_subject = subject_line(r, "Rejected - Cancel Booking")
     desk_body = email_html(
         ref_badge_html(r),
         "<p>Dear Admin Team,</p>",
@@ -1088,7 +1099,7 @@ def travel_desk_confirm(request_id):
 
     try:
         send_mail([r["ManagerEmail"]],
-                  with_ref(r, f"Approval required: hotel booking for {r['EmpName']} ({r['EmpCode']})"),
+                  subject_line(r, "Pending Manager Approval"),
                   manager_email_html(r))
     except Exception:  # noqa: BLE001
         log.exception("Failed to email the manager for %s", request_id)
@@ -1208,11 +1219,15 @@ def final_booking(request_id):
         page["r"] = load_request(request_id)
         return render_template(template, state="already", **page)
     r = page["r"] = load_request(request_id)
+    try:
+        log.info("Voucher for %s saved to %s", booking_ref(r), save_voucher_file(r, file_name, content))
+    except OSError:  # the database copy is kept either way
+        log.exception("Could not save the voucher file for %s in %s", booking_ref(r), VOUCHER_DIR)
 
     cc = [r["ManagerEmail"]] if r.get("ManagerCode") and r.get("ManagerEmail") else None
     try:
         send_mail([r["EmpEmail"]],
-                  with_ref(r, f"Your hotel booking in {r['PlaceTo']} is confirmed - voucher attached"),
+                  subject_line(r, "Booked - Voucher Attached"),
                   voucher_email_html(r), cc=cc, attachments=[(file_name, "application/pdf", content)])
     except Exception:  # noqa: BLE001
         log.exception("Voucher email failed for %s", request_id)

@@ -13,7 +13,9 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
    - Several choices: **Choose & Approve** opens the review page, where the manager picks Choice 1, 2, ... and must tick "I acknowledge that once approved, this booking is non-refundable." There is no comment box for approvals.
    - **Reject** always requires a reason.
    Approval sets `Pending Final Booking`.
-4. **Admin Team books.** They get an "Approved - final booking needed" email with **Upload Booking Voucher**. After booking, they upload the voucher (PDF, max 3 MB); the portal emails it as an attachment to the employee with the manager in CC and sets `Booked`.
+4. **Admin Team books.** They get an "Approved - Pending Final Booking" email with **Upload Booking Voucher**. After booking, they upload the voucher (PDF, max 3 MB); the portal emails it as an attachment to the employee with the manager in CC and sets `Booked`. Each voucher is stored in the database and also saved as a file on the server in `vouchers\<YYYY-MM>\<ref>_<file name>.pdf` (folder set by `VOUCHER_DIR`, default `vouchers` next to `app.py`).
+
+Email subjects read `Hotel Booking for <employee name> - Ref #10013 - <status>` (Pending Booking, Pending Manager Approval, Approved - Pending Final Booking, Booked - Voucher Attached, Rejected).
 5. On rejection, the employee gets the reason and the Admin Team is asked to cancel the tentative booking.
 
 Employees with no reporting manager on record skip step 3: the Admin Team's confirmation approves the request and goes straight to step 4.

@@ -8,3 +8,6 @@ venv/
 
 # Server logs
 logs/
+
+# Uploaded booking vouchers (also stored in the database)
+vouchers/

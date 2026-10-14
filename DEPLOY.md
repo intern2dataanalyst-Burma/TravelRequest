@@ -96,7 +96,7 @@ Then do one full test request:
 1. Submit a request with your own Emp Code.
 2. The Admin Team email arrives. Click **Enter Booking Details**, fill in a choice (including the Admin Team only fields), and click **Save & Send for Approval**.
 3. The manager email arrives. Click **Approve**, tick the non-refundable box and click **Confirm Approval**.
-4. The Admin Team gets "Approved - final booking needed". Click **Upload Booking Voucher** and upload a PDF.
+4. The Admin Team gets "Approved - Pending Final Booking". Click **Upload Booking Voucher** and upload a PDF.
 5. The employee receives the voucher as an attachment, with the manager in CC.
 
 From an **office PC**, also open the **User Management** tab, unlock it with `HR_ADMIN_PASSWORD` from `.env`, and try **Export bookings**. From outside the office it shows "Office network only"; that is expected.
@@ -111,6 +111,7 @@ Run these in an administrator PowerShell in `C:\Apps\TravelRequest`.
 |---|---|
 | Restart (after editing `.env` or updating files) | `powershell -ExecutionPolicy Bypass -File .\deploy\restart.ps1` |
 | See the log | `Get-Content .\logs\portal.log -Tail 50 -Wait` |
+| Uploaded vouchers (PDF) | `C:\Apps\TravelRequest\vouchers\<YYYY-MM>\` (keep this folder when updating) |
 | Is it running? | `Get-ScheduledTask TravelPortal` |
 
 **Updating the portal later:** stop it (`Stop-ScheduledTask TravelPortal`), copy the new files over the folder (keep your `.env`), then run `.\deploy\install.ps1` again.
