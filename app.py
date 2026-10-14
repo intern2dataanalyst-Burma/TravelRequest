@@ -1098,9 +1098,11 @@ def travel_desk_confirm(request_id):
         return render_template(template, state="done", **page)
 
     try:
+        # Admin Team (To + CC addresses) in CC, so they can see the approval request went out
+        cc = [a for a in dict.fromkeys(TRAVEL_DESK_TO + TRAVEL_DESK_CC) if a.lower() != r["ManagerEmail"].lower()]
         send_mail([r["ManagerEmail"]],
                   subject_line(r, "Pending Manager Approval"),
-                  manager_email_html(r))
+                  manager_email_html(r), cc=cc)
     except Exception:  # noqa: BLE001
         log.exception("Failed to email the manager for %s", request_id)
         advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # details stay saved; the team can retry
