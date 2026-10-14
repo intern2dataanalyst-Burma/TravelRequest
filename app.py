@@ -751,14 +751,12 @@ def final_booking_email_html(r):
            else f"approved by {html.escape(r['ManagerName'])}")
     chose = (f" The manager chose <b>Choice {selected_option_no(r)}</b>; please release the other choices."
              if multi else "")
-    cc = "" if direct else ", with the manager in CC"
     return email_html(
         ref_badge_html(r),
         "<p>Dear Admin Team,</p>",
         f"<p>The hotel booking for {html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) is <b>approved</b>: "
         f"{how}.{chose}</p>",
-        f"<p>Please make the final booking, then click <b>Upload Booking Voucher</b> to email the voucher (PDF) to "
-        f"the employee{cc}.</p>",
+        "<p>Please make the final booking, then click <b>Upload Booking Voucher</b> to email the voucher (PDF).</p>",
         approved_box_html(r, "Approved booking", admin=True),
         details_table_html(r, booking=False),
         "<p style='margin:22px 0 8px'>",
