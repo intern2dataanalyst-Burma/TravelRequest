@@ -181,11 +181,6 @@
         <button type="button" class="btn-add" id="addOption"><i class="fas fa-plus me-1"></i> Add another choice</button>
       {% endif %}
 
-      {% if direct %}
-      <p class="help mt-3 mb-0">
-        This employee has no reporting manager on record, so submitting approves the booking. You then upload the final voucher.
-      </p>
-      {% endif %}
       <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
         <button type="submit" class="btn btn-hp">
           {{ 'Save & Confirm Booking' if direct else 'Save & Send for Approval' }} <i class="fas fa-arrow-right ms-1"></i>
