@@ -1,20 +1,17 @@
-{# Brand header: logo bar plus a tab strip on the left; both stay fixed at the top while the page scrolls #}
-<div class="hp-top">
-  <header class="hp-header">
-    <a class="hp-brand" href="{{ url_for('index') }}" aria-label="Hunger Pangs - Travel Accommodation Portal">
-      {% if logo_url %}
-        <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
-      {% else %}
-        <span class="hp-wordmark" role="img" aria-label="Hunger Pangs"></span>
-      {% endif %}
-    </a>
-  </header>
-  <nav class="hp-tabs" aria-label="Sections">
-    {% if show_hr_link %}
-      <a href="{{ url_for('index') }}" class="hp-tab {{ 'active' if not hr_active }}" {{ 'aria-current="page"'|safe if not hr_active }}><i class="fas fa-hotel"></i>Travel Accommodation Portal</a>
-      <a href="{{ url_for('hr_dashboard') }}" class="hp-tab {{ 'active' if hr_active }}" {{ 'aria-current="page"'|safe if hr_active }}><i class="fas fa-users-gear"></i>User Management</a>
+{# Fixed header bar with the logo only. Portal pages also get the section tabs in a fixed left sidebar
+   (a row under the header on phones). Pages opened from email links show the logo bar only. #}
+<header class="hp-header">
+  <a class="hp-brand" href="{{ url_for('index') }}" aria-label="Hunger Pangs - Travel Accommodation Portal">
+    {% if logo_url %}
+      <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
     {% else %}
-      <span class="hp-tab active" aria-current="page">{{ app_name or 'Travel Accommodation Portal' }}</span>
+      <span class="hp-wordmark" role="img" aria-label="Hunger Pangs"></span>
     {% endif %}
-  </nav>
-</div>
+  </a>
+</header>
+{% if show_hr_link %}
+<nav class="hp-side" aria-label="Sections">
+  <a href="{{ url_for('index') }}" class="hp-side-tab {{ 'active' if not hr_active }}" {{ 'aria-current="page"'|safe if not hr_active }}><i class="fas fa-hotel"></i><span>Travel Accommodation Portal</span></a>
+  <a href="{{ url_for('hr_dashboard') }}" class="hp-side-tab {{ 'active' if hr_active }}" {{ 'aria-current="page"'|safe if hr_active }}><i class="fas fa-users-gear"></i><span>User Management</span></a>
+</nav>
+{% endif %}
