@@ -169,7 +169,7 @@
         {% for row in rows %}
           <div class="option" data-option>
             <div class="option-head">
-              <div class="option-title"><span data-num>Choice {{ loop.index }}</span>{% if loop.first %}<span class="option-sub">required</span>{% endif %}</div>
+              <div class="option-title"><span data-num>{{ loop.index }}</span></div>
               {% if not loop.first %}<button type="button" class="btn-remove" data-remove><i class="fas fa-xmark me-1"></i>Remove</button>{% endif %}
             </div>
             {{ choice_fields(row, loop.index0) }}
@@ -210,7 +210,7 @@
 
       function renumber() {
         const opts = list.querySelectorAll('[data-option]');
-        opts.forEach((el, i) => { el.querySelector('[data-num]').textContent = 'Choice ' + (i + 1); });
+        opts.forEach((el, i) => { el.querySelector('[data-num]').textContent = i + 1; });
         if (addBtn) addBtn.classList.toggle('d-none', opts.length >= MAX);
       }
       if (addBtn) addBtn.addEventListener('click', () => {
