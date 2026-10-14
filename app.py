@@ -2,7 +2,9 @@
 Travel Accommodation Portal (internal network)
 Flask + pyodbc (SQL Server) + MSAL/Microsoft Graph mail + signed approval links
 """
+import base64
 import html
+import io
 import ipaddress
 import json
 import logging
@@ -12,15 +14,16 @@ import secrets
 import threading
 import time
 import uuid
-from datetime import date, datetime
+import calendar
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import msal
 import pyodbc
 import requests
 from dotenv import load_dotenv
-from flask import (Flask, Response, abort, flash, jsonify, redirect, render_template, request, session,
-                   url_for)
+from flask import (Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file,
+                   session, url_for)
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
@@ -56,7 +59,8 @@ PORT = int(os.environ.get("PORT", "8080"))
 SECRET_KEY = os.environ.get("SECRET_KEY", "")
 REVIEW_LINK_MAX_AGE = int(os.environ.get("REVIEW_LINK_MAX_AGE_DAYS", "30")) * 86400
 
-# Travel desk (Jigna, Mittal, Sagar) and CC (Pooja) - comma separated email addresses
+# Admin Team (Jigna, Mittal, Sagar) and CC (Pooja) - comma separated email addresses. (The variable names
+# keep the old "Travel Desk" name so existing .env files keep working.)
 TRAVEL_DESK_TO = [e.strip() for e in os.environ.get("TRAVEL_DESK_TO", "").split(",") if e.strip()]
 TRAVEL_DESK_CC = [e.strip() for e in os.environ.get("TRAVEL_DESK_CC", "").split(",") if e.strip()]
 
@@ -99,24 +103,32 @@ HR_ALLOWED_NETWORKS = os.environ.get(
 HR_SESSION_MINUTES = int(os.environ.get("HR_SESSION_MINUTES", "30"))
 
 ROOM_CATEGORIES = {"Single Occupancy", "Double Occupancy"}
+REFUND_STATUSES = ("Refundable", "Non-refundable", "Partial refundable")
 
-# Workflow: employee submits -> Travel Desk books -> manager approves/rejects
-STATUS_BOOKING = "Pending Booking"            # waiting for the Travel Desk to arrange the booking
-STATUS_MANAGER = "Pending Manager Approval"   # booking arranged, waiting for the manager
-DIRECT_NOTE = "No reporting manager on record: approved when the Travel Desk confirmed the booking"
-MAX_BOOKING_OPTIONS = 5  # options the Travel Desk can offer the manager
+# Workflow: employee submits -> Admin Team proposes choices -> manager approves one/rejects
+#           -> Admin Team makes the final booking and uploads the voucher -> employee gets it (manager in CC)
+STATUS_BOOKING = "Pending Booking"            # waiting for the Admin Team to propose the booking
+STATUS_MANAGER = "Pending Manager Approval"   # choices proposed, waiting for the manager
+STATUS_FINAL = "Pending Final Booking"        # approved, waiting for the Admin Team to book and upload the voucher
+STATUS_BOOKED = "Booked"                      # voucher emailed to the employee
+DIRECT_NOTE = "No reporting manager on record: approved when the Admin Team confirmed the booking"
+MAX_BOOKING_OPTIONS = 5  # choices the Admin Team can offer the manager
+MAX_VOUCHER_BYTES = 3 * 1024 * 1024  # Graph sendMail takes attachments up to 3 MB in a single request
+VOUCHER_TABLE = "dbo.TravelBookingVouchers"
 GRAPH_SCOPE = ["https://graph.microsoft.com/.default"]
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_VOUCHER_BYTES + 512 * 1024  # voucher upload plus form fields
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("travel-portal")
 
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_urlsafe(32)
     log.warning("SECRET_KEY is not set: approval links will stop working when the server restarts")
-# Separate salts: a Travel Desk link can never be used as a manager approval link, and vice versa
+# Separate salts: an Admin Team link can never be used as a manager approval link, and vice versa
 _review_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-review")
 _desk_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-desk")
+_voucher_signer = URLSafeTimedSerializer(SECRET_KEY, salt="travel-voucher")
 
 # Signed session cookie for the User Management unlock (HttpOnly; not readable by page scripts)
 app.secret_key = SECRET_KEY
@@ -251,14 +263,14 @@ def insert_request(req):
             INSERT INTO TravelRequests
               (RequestId, EmpCode, EmpName, EmpEmail, ManagerCode, ManagerName, ManagerEmail,
                Designation, Department, FromDate, ToDate, PlaceFrom, PlaceTo,
-               RoomCategory, PreferredLocation, ReasonOfTravel, Status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               RoomCategory, PreferredLocation, PreferredHotel, ReasonOfTravel, Status)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             req["RequestId"], req["EmpCode"], req["EmpName"], req["EmpEmail"],
             req["ManagerCode"], req["ManagerName"], req["ManagerEmail"],
             req["Designation"], req["Department"], req["FromDate"], req["ToDate"],
             req["PlaceFrom"], req["PlaceTo"], req["RoomCategory"], req["PreferredLocation"],
-            req["ReasonOfTravel"], STATUS_BOOKING,
+            req["PreferredHotel"] or None, req["ReasonOfTravel"], STATUS_BOOKING,
         )
         conn.commit()
 
@@ -294,10 +306,11 @@ def advance_status(request_id, from_status, to_status):
 
 
 def save_booking(request_id, options, to_status, comment=None):
-    """Store the Travel Desk's booking options (JSON) and move Pending Booking -> to_status atomically.
-    to_status is Pending Manager Approval, or Approved when there is no reporting manager - then the single
-    option is also written to BookingArea/PropertyName/Cost as the final booking. Returns True if this call won."""
-    approved = to_status == "Approved"
+    """Store the Admin Team's booking choices (JSON) and move Pending Booking -> to_status atomically.
+    to_status is Pending Manager Approval, or Pending Final Booking when there is no reporting manager - then the
+    single choice is also written to BookingArea/PropertyName/Cost as the approved booking.
+    Returns True if this call won."""
+    approved = to_status == STATUS_FINAL
     sets, args = ["BookingOptions = ?", "Status = ?"], [options_json(options), to_status]
     if approved:
         final = options[0]
@@ -314,8 +327,8 @@ def save_booking(request_id, options, to_status, comment=None):
 
 
 def claim_decision(request_id, status, comment, from_status=None, option=None, option_no=None):
-    """Atomically move a request awaiting a decision to Approved/Rejected. On approval, the manager's chosen
-    booking option (1-based option_no) becomes the final BookingArea/PropertyName/Cost in the same update.
+    """Atomically move a request awaiting a decision to Pending Final Booking (approved) or Rejected. On approval,
+    the manager's chosen booking choice (1-based option_no) becomes BookingArea/PropertyName/Cost in the same update.
     Returns True if this call won."""
     chosen = ", BookingArea = ?, PropertyName = ?, Cost = ?, SelectedOption = ?" if option else ""
     chosen_args = [option["area"], option["property"], option["cost"], option_no] if option else []
@@ -330,6 +343,53 @@ def claim_decision(request_id, status, comment, from_status=None, option=None, o
         won = cur.rowcount == 1
         conn.commit()
         return won
+
+
+def save_voucher(request_id, file_name, content):
+    """Store the final booking voucher and move Pending Final Booking -> Booked in one transaction.
+    Returns True if this call won. A re-upload (after a failed email) replaces the earlier file."""
+    with get_conn() as conn:
+        conn.autocommit = False
+        cur = conn.cursor()
+        cur.execute("UPDATE TravelRequests SET Status = ? WHERE RequestId = ? AND Status = ?",
+                    STATUS_BOOKED, request_id, STATUS_FINAL)
+        if cur.rowcount != 1:
+            conn.rollback()
+            return False
+        cur.execute(f"DELETE FROM {_q(VOUCHER_TABLE)} WHERE RequestId = ?", request_id)
+        cur.execute(f"INSERT INTO {_q(VOUCHER_TABLE)} (RequestId, FileName, Content) VALUES (?, ?, ?)",
+                    request_id, file_name, pyodbc.Binary(content))
+        conn.commit()
+        return True
+
+
+def load_voucher(request_id):
+    """(file name, PDF bytes, uploaded at UTC) or None."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"SELECT FileName, Content, UploadedAt FROM {_q(VOUCHER_TABLE)} WHERE RequestId = ?", request_id)
+        row = cur.fetchone()
+    return (row[0], bytes(row[1]), row[2]) if row else None
+
+
+def export_requests(start, end, basis):
+    """Requests whose request date (basis 'created', India time) or check-in date (basis 'checkin') falls in
+    [start, end] inclusive, oldest first, with the voucher upload time. Never reads the voucher files."""
+    column = "CAST(DATEADD(minute, 330, r.CreatedAt) AS date)" if basis == "created" else "r.FromDate"
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT r.*, v.UploadedAt AS VoucherUploadedAt, v.FileName AS VoucherFileName
+            FROM TravelRequests r
+            LEFT JOIN {_q(VOUCHER_TABLE)} v ON v.RequestId = r.RequestId
+            WHERE {column} BETWEEN ? AND ?
+            ORDER BY r.BookingRefID
+            """,
+            start, end,
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 # --------------------------------------------------------------------------
@@ -352,16 +412,21 @@ def get_graph_token():
     return result["access_token"]
 
 
-def send_mail(to, subject, html_body, cc=None):
-    payload = {
-        "message": {
-            "subject": subject,
-            "body": {"contentType": "HTML", "content": html_body},
-            "toRecipients": [{"emailAddress": {"address": a}} for a in to],
-            "ccRecipients": [{"emailAddress": {"address": a}} for a in (cc or [])],
-        },
-        "saveToSentItems": True,
+def send_mail(to, subject, html_body, cc=None, attachments=None):
+    """attachments: [(file name, content type, bytes)], 3 MB in total at most."""
+    message = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": html_body},
+        "toRecipients": [{"emailAddress": {"address": a}} for a in to],
+        "ccRecipients": [{"emailAddress": {"address": a}} for a in (cc or [])],
     }
+    if attachments:
+        message["attachments"] = [
+            {"@odata.type": "#microsoft.graph.fileAttachment", "name": name, "contentType": ctype,
+             "contentBytes": base64.b64encode(data).decode("ascii")}
+            for name, ctype, data in attachments
+        ]
+    payload = {"message": message, "saveToSentItems": True}
     resp = requests.post(
         f"https://graph.microsoft.com/v1.0/users/{SENDER_MAILBOX}/sendMail",
         headers={"Authorization": f"Bearer {get_graph_token()}", "Content-Type": "application/json"},
@@ -414,7 +479,7 @@ def fmt_duration(from_date, to_date):
 
 
 def details_table_html(r, booking=True):
-    """Employee and trip details. booking=False leaves out the Travel Desk's booking (shown in its own box)."""
+    """Employee and trip details. booking=False leaves out the Admin Team's booking (shown in its own box)."""
     rows = [
         ("Booking Ref", booking_ref(r)),
         ("Emp Code", r["EmpCode"]),
@@ -429,6 +494,7 @@ def details_table_html(r, booking=True):
         ("Reason of Travel", r.get("ReasonOfTravel") or "-"),
         ("Category of Room", r["RoomCategory"]),
         ("Preferred Location", r["PreferredLocation"] or "-"),
+        ("Preferred Hotel", r.get("PreferredHotel") or "-"),
     ]
     if booking and r.get("PropertyName"):
         rows += booking_rows(r)
@@ -452,9 +518,9 @@ def details_table_html(r, booking=True):
     )
 
 
-def booking_box_html(r, title="Booking arranged by the Travel Desk", rows=None, emphasis=False):
-    """A booking (Place/Area, Property Name, Cost) in a soft, brand-tinted box.
-    rows defaults to the final booking; emphasis=True gives the approved option a stronger border."""
+def booking_box_html(r, title="Booking arranged by the Admin Team", rows=None, emphasis=False):
+    """A booking (Place/Area, Hotel, Total Cost) in a soft, brand-tinted box.
+    rows defaults to the approved booking; emphasis=True gives the approved choice a stronger border."""
     rows = "".join(
         "<tr>"
         f"<td width='40%' style='width:40%;padding:6px 12px 6px 0;color:#8a5a4c;font-size:13px'>{html.escape(k)}</td>"
@@ -473,17 +539,24 @@ def booking_box_html(r, title="Booking arranged by the Travel Desk", rows=None, 
     )
 
 
-def options_html(r, heading_note=""):
-    """Every option the Travel Desk offered, one box each, labelled Option 1, Option 2, ..."""
+def choice_label(n, total):
+    """'Choice 2' when the Admin Team offered several; no number at all for a single choice."""
+    return f"Choice {n}" if total > 1 else "Proposed booking"
+
+
+def options_html(r, heading_note="", admin=False):
+    """Every choice the Admin Team offered, one box each (Choice 1, Choice 2, ...). admin=True adds the
+    Admin-only fields; only emails to the Admin Team pass it."""
     opts = booking_options(r)
-    return "".join(booking_box_html(r, f"Option {i}{heading_note}", option_rows(o)) for i, o in enumerate(opts, 1))
+    return "".join(booking_box_html(r, choice_label(i, len(opts)) + heading_note, option_rows(o, admin))
+                   for i, o in enumerate(opts, 1))
 
 
-def approved_box_html(r, title):
-    """The option the manager approved, highlighted."""
+def approved_box_html(r, title, admin=False):
+    """The choice the manager approved, highlighted."""
     n, total = selected_option_no(r), len(booking_options(r))
-    label = f"{title} (Option {n})" if n and total > 1 else title
-    return booking_box_html(r, label, emphasis=True)
+    label = f"{title} (Choice {n})" if n and total > 1 else title
+    return booking_box_html(r, label, booking_rows(r, admin), emphasis=True)
 
 
 def reason_box_html(label, text):
@@ -513,50 +586,78 @@ def fmt_inr(amount):
     return "₹" + (head + "," + tail if head else tail) + "." + frac
 
 
-def booking_rows(r):
-    """The final (approved) booking as (label, value) pairs."""
-    return [
+COST_LABEL = "Total Cost of stay with GST (approx)"
+# Filled in by the Admin Team for each choice; shown only to the Admin Team (never to the manager or employee)
+ADMIN_FIELDS = (("occupancy", "Type of occupancy"), ("refund", "Refund status"), ("remarks", "Remarks"))
+
+
+def booking_rows(r, admin=False):
+    """The approved booking as (label, value) pairs. admin=True adds the Admin-only fields of the chosen choice."""
+    rows = [
         ("Place/Area", r.get("BookingArea") or "-"),
-        ("Property Name", r.get("PropertyName") or "-"),
-        ("Cost", fmt_inr(r["Cost"]) if r.get("Cost") is not None else "-"),
+        ("Hotel", r.get("PropertyName") or "-"),
+        (COST_LABEL, fmt_inr(r["Cost"]) if r.get("Cost") is not None else "-"),
     ]
+    if admin:
+        rows += [(label, chosen_option(r).get(key) or "-") for key, label in ADMIN_FIELDS]
+    return rows
 
 
 def options_json(options):
-    return json.dumps([{"area": o["area"], "property": o["property"], "cost": f"{o['cost']:.2f}"} for o in options],
+    return json.dumps([{"area": o["area"], "property": o["property"], "cost": f"{o['cost']:.2f}",
+                        **{key: o.get(key) or "" for key, _ in ADMIN_FIELDS}} for o in options],
                       ensure_ascii=False)
 
 
 def booking_options(r):
-    """All options the Travel Desk offered, as [{'area', 'property', 'cost': Decimal}].
-    Requests saved before multiple options existed have just their single booking."""
+    """All choices the Admin Team offered, as [{'area', 'property', 'cost': Decimal, 'occupancy', 'refund',
+    'remarks'}]. Requests saved before multiple choices existed have just their single booking."""
     raw = r.get("BookingOptions")
     if raw:
         try:
-            return [{"area": o["area"], "property": o["property"], "cost": Decimal(o["cost"])} for o in json.loads(raw)]
+            return [{"area": o["area"], "property": o["property"], "cost": Decimal(o["cost"]),
+                     **{key: o.get(key) or "" for key, _ in ADMIN_FIELDS}} for o in json.loads(raw)]
         except (ValueError, KeyError, TypeError, InvalidOperation):
             log.warning("Unreadable BookingOptions for %s", r.get("RequestId"))
     if r.get("PropertyName"):
-        return [{"area": r.get("BookingArea") or "", "property": r["PropertyName"], "cost": r.get("Cost") or Decimal(0)}]
+        return [{"area": r.get("BookingArea") or "", "property": r["PropertyName"], "cost": r.get("Cost") or Decimal(0),
+                 **{key: "" for key, _ in ADMIN_FIELDS}}]
     return []
 
 
-def option_rows(o):
-    return [("Place/Area", o["area"] or "-"), ("Property Name", o["property"] or "-"), ("Cost", fmt_inr(o["cost"]))]
+def option_rows(o, admin=False):
+    rows = [("Place/Area", o["area"] or "-"), ("Hotel", o["property"] or "-"), (COST_LABEL, fmt_inr(o["cost"]))]
+    if admin:
+        rows += [(label, o.get(key) or "-") for key, label in ADMIN_FIELDS]
+    return rows
 
 
 def selected_option_no(r):
-    """1-based number of the option the manager approved (1 for single-option and older requests)."""
+    """1-based number of the choice the manager approved (1 for single-choice and older requests)."""
     return r.get("SelectedOption") or (1 if r.get("PropertyName") else None)
 
 
+def chosen_option(r):
+    """The approved choice with its Admin-only fields, or {}."""
+    n, opts = selected_option_no(r), booking_options(r)
+    return opts[n - 1] if n and n <= len(opts) else {}
+
+
+def is_approved(r):
+    """Approved by the manager (or no manager needed): waiting for the voucher, booked, or approved before the
+    voucher step existed."""
+    return r.get("Status") in (STATUS_FINAL, STATUS_BOOKED, "Approved")
+
+
 app.jinja_env.globals.update(booking_ref=booking_ref, fmt_duration=fmt_duration, booking_options=booking_options,
-                             option_rows=option_rows, selected_option_no=selected_option_no,
-                             max_booking_options=MAX_BOOKING_OPTIONS)  # same values as the emails
+                             option_rows=option_rows, selected_option_no=selected_option_no, choice_label=choice_label,
+                             is_approved=is_approved, refund_statuses=REFUND_STATUSES, cost_label=COST_LABEL,
+                             max_booking_options=MAX_BOOKING_OPTIONS,
+                             max_voucher_mb=MAX_VOUCHER_BYTES // (1024 * 1024))  # same values as the emails
 
 
 # --------------------------------------------------------------------------
-# Signed action links (intranet) and workflow emails - plain HTML, no Actionable Messages
+# Signed action links and workflow emails - plain HTML, no Actionable Messages
 # --------------------------------------------------------------------------
 def make_token(signer, request_id):
     return signer.dumps(str(request_id))
@@ -574,13 +675,19 @@ def desk_url(request_id):
     return f"{APP_BASE_URL}/travel-desk-confirm/{request_id}?t={make_token(_desk_signer, request_id)}"
 
 
-def review_url(request_id, decision):
-    return f"{APP_BASE_URL}/review/{request_id}?t={make_token(_review_signer, request_id)}&decision={decision}"
+def review_url(request_id, decision, quick=False):
+    """quick=True: the 1-click Approve button (single choice) - the page approves as soon as it opens."""
+    url = f"{APP_BASE_URL}/review/{request_id}?t={make_token(_review_signer, request_id)}&decision={decision}"
+    return url + "&quick=1" if quick else url
+
+
+def voucher_url(request_id):
+    return f"{APP_BASE_URL}/final-booking/{request_id}?t={make_token(_voucher_signer, request_id)}"
 
 
 EMAIL_FONT = "font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#1d1d1d"
-LINK_NOTE = ("<p style='color:#7a6f66;font-size:12px'>The button opens the Travel Portal on the office "
-             "network, where you confirm. It works only from the office network or VPN.</p>")
+LINK_NOTE = ("<p style='color:#7a6f66;font-size:12px'>The button opens the Travel Accommodation Portal "
+             "in your browser.</p>")
 
 
 def _email_button(label, url, color):
@@ -592,51 +699,97 @@ def _email_button(label, url, color):
 
 
 def desk_email_html(r):
-    """Step 1 - Travel Desk: arrange the booking, then send it to the manager."""
+    """Step 1 - Admin Team: find the hotel, then send the choices to the manager."""
     direct = not r.get("ManagerCode")
     then = ("Once arranged, click <b>Enter Booking Details</b> to add the booking. This employee has "
-            "<b>no reporting manager on record</b>, so saving it approves the request."
+            "<b>no reporting manager on record</b>, so no approval is needed: you can make the final booking "
+            "straight after."
             if direct else
-            "Once arranged, click <b>Enter Booking Details</b> to add the booking and send it to "
+            "Once arranged, click <b>Enter Booking Details</b> to add one or more hotel choices and send them to "
             f"<b>{html.escape(r['ManagerName'])}</b> for approval.")
-    label = "Enter Booking Details"
     return email_html(
         ref_badge_html(r),
-        "<p>Dear Travel Desk Team,</p>",
-        f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a travel request. "
-        f"Please arrange tickets and accommodation. {then}</p>",
+        "<p>Dear Admin Team,</p>",
+        f"<p>{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) has submitted a hotel booking request. "
+        f"Please arrange the hotel. {then}</p>",
         details_table_html(r),
-        "<p style='margin:22px 0 8px'>", _email_button(label, desk_url(r["RequestId"]), "#c54b36"), "</p>",
+        "<p style='margin:22px 0 8px'>", _email_button("Enter Booking Details", desk_url(r["RequestId"]), "#c54b36"),
+        "</p>",
         LINK_NOTE,
     )
 
 
 def manager_email_html(r):
-    """Step 2 - Manager: the Travel Desk has arranged the booking; approve or reject it."""
+    """Step 2 - Manager: approve the Admin Team's choice (or pick one of several), or reject."""
     rid = r["RequestId"]
     n = len(booking_options(r))
-    ask = (f"The Travel Desk has found <b>{n} accommodation options</b>. Please choose one to approve, "
-           "or reject the request." if n > 1 else "Please review and approve or reject the booking.")
+    if n > 1:
+        ask = (f"The Admin Team has found <b>{n} hotel choices</b>. Please choose one to approve, "
+               "or reject the request. A reason is required to reject.")
+        approve = _email_button("Choose & Approve", review_url(rid, "approve"), "#7f8e28")
+        note = ""
+    else:
+        ask = "Please approve or reject the booking below. A reason is required to reject."
+        approve = _email_button("Approve", review_url(rid, "approve", quick=True), "#7f8e28")
+        note = ("<p style='color:#7a6f66;font-size:12px'><b>Approve</b> approves the booking in one click. "
+                "By approving, you acknowledge that once approved, this booking is non-refundable.</p>")
     return email_html(
         ref_badge_html(r),
         f"<p>Dear {html.escape(r['ManagerName'])},</p>",
-        f"<p>The Travel Desk has arranged tickets and accommodation for {html.escape(r['EmpName'])} "
-        f"({html.escape(r['EmpCode'])}). {ask} A reason is required to reject.</p>",
+        f"<p>The Admin Team has arranged a hotel for {html.escape(r['EmpName'])} "
+        f"({html.escape(r['EmpCode'])}). {ask}</p>",
         options_html(r),
         details_table_html(r, booking=False),
-        "<p style='margin:22px 0 8px'>",
-        _email_button("Choose & Approve" if n > 1 else "Approve", review_url(rid, "approve"), "#7f8e28"),
+        "<p style='margin:22px 0 8px'>", approve,
         _email_button("Reject", review_url(rid, "reject"), "#c54b36"),
         "</p>",
+        note,
         LINK_NOTE,
+    )
+
+
+def final_booking_email_html(r):
+    """Step 3 - Admin Team: the booking is approved; book it and upload the voucher."""
+    direct = not r.get("ManagerCode")
+    multi = len(booking_options(r)) > 1
+    how = ("no manager approval was required (no reporting manager on record)" if direct
+           else f"approved by {html.escape(r['ManagerName'])}")
+    chose = (f" The manager chose <b>Choice {selected_option_no(r)}</b>; please release the other choices."
+             if multi else "")
+    cc = "" if direct else ", with the manager in CC"
+    return email_html(
+        ref_badge_html(r),
+        "<p>Dear Admin Team,</p>",
+        f"<p>The hotel booking for {html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])}) is <b>approved</b>: "
+        f"{how}.{chose}</p>",
+        f"<p>Please make the final booking, then click <b>Upload Booking Voucher</b> to email the voucher (PDF) to "
+        f"the employee{cc}.</p>",
+        approved_box_html(r, "Approved booking", admin=True),
+        details_table_html(r, booking=False),
+        "<p style='margin:22px 0 8px'>",
+        _email_button("Upload Booking Voucher", voucher_url(r["RequestId"]), "#c54b36"), "</p>",
+        LINK_NOTE,
+    )
+
+
+def voucher_email_html(r):
+    """Step 4 - Employee (manager in CC): the booking is confirmed; the voucher is attached."""
+    dates = f"{fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}"
+    return email_html(
+        ref_badge_html(r),
+        f"<p>Dear {html.escape(r['EmpName'])},</p>",
+        f"<p>Your hotel booking in {html.escape(r['PlaceTo'])} ({dates}) is <b>confirmed</b>. "
+        "The booking voucher is attached to this email (PDF).</p>",
+        approved_box_html(r, "Your booking"),
+        details_table_html(r, booking=False),
     )
 
 
 # --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
-# Travel Desk and manager links carry their own signed token; /healthz is for monitoring; /static/ is the logo
-_OPEN_PREFIXES = ("/travel-desk-confirm/", "/desk/", "/review/", "/healthz", "/static/")
+# Admin Team and manager links carry their own signed token; /healthz is for monitoring; /static/ is the logo
+_OPEN_PREFIXES = ("/travel-desk-confirm/", "/desk/", "/review/", "/final-booking/", "/healthz", "/static/")
 
 
 @app.before_request
@@ -649,6 +802,13 @@ def require_portal_login():
             and secrets.compare_digest((auth.password or "").encode(), PORTAL_PASSWORD.encode())):
         return None
     return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="Travel Portal"'})
+
+
+@app.errorhandler(413)
+def too_large(_):
+    mb = MAX_VOUCHER_BYTES // (1024 * 1024)
+    return Response(f"The file is too large. The booking voucher must be a PDF of at most {mb} MB. "
+                    "Go back and choose a smaller file.", 413, {"Content-Type": "text/plain; charset=utf-8"})
 
 
 @app.get("/")
@@ -693,7 +853,7 @@ def submit_travel():
     emp_code = get("emp_code")
     designation, department = get("designation"), get("department")
     place_from, place_to = get("place_from"), get("place_to")
-    room, pref_loc = get("room_category"), get("preferred_location")
+    room, pref_loc, pref_hotel = get("room_category"), get("preferred_location"), get("preferred_hotel")
     travel_reason = get("travel_reason")
 
     missing = [n for n, v in {
@@ -718,6 +878,8 @@ def submit_travel():
         return jsonify({"ok": False, "error": "Reason of Travel is too long (max 500 characters)"}), 400
     if max(len(designation), len(department), len(place_from), len(place_to), len(pref_loc)) > 150:
         return jsonify({"ok": False, "error": "A field is too long (max 150 characters)"}), 400
+    if len(pref_hotel) > 200:
+        return jsonify({"ok": False, "error": "Preferred Hotel name is too long (max 200 characters)"}), 400
 
     try:
         emp = fetch_employee(emp_code)
@@ -742,7 +904,7 @@ def submit_travel():
         "Designation": emp["Designation"] or designation, "Department": emp["Department"] or department,
         "FromDate": from_date, "ToDate": to_date,
         "PlaceFrom": place_from, "PlaceTo": place_to,
-        "RoomCategory": room, "PreferredLocation": pref_loc,
+        "RoomCategory": room, "PreferredLocation": pref_loc, "PreferredHotel": pref_hotel,
         "ReasonOfTravel": travel_reason,
     }
 
@@ -756,15 +918,15 @@ def submit_travel():
     try:
         send_mail(
             TRAVEL_DESK_TO,
-            with_ref(req, f"Booking required: {req['EmpName']} ({req['EmpCode']}) - "
+            with_ref(req, f"Hotel booking request: {req['EmpName']} ({req['EmpCode']}) - "
                           f"{req['PlaceFrom']} to {req['PlaceTo']}"),
             desk_email_html(req),
             cc=TRAVEL_DESK_CC,
         )
     except Exception:  # noqa: BLE001
-        log.exception("Failed to email the Travel Desk")
+        log.exception("Failed to email the Admin Team")
         set_status(req["RequestId"], "MailFailed")
-        return jsonify({"ok": False, "error": "Could not email the Travel Desk. Please contact support."}), 502
+        return jsonify({"ok": False, "error": "Could not email the Admin Team. Please contact support."}), 502
 
     return jsonify({
         "ok": True,
@@ -774,65 +936,41 @@ def submit_travel():
     })
 
 
-def notify_decision(r, new_status, comment):
-    """Step 3 - final emails, sent separately to the employee (EmpEmail) and the Travel Desk (CC as configured).
-    Approved: the employee gets the final booking (Property Name, Place/Area, Cost).
-    Rejected: the employee gets the manager's reason; the Travel Desk is asked to cancel the tentative booking."""
-    direct = not r.get("ManagerCode")
-    approved = new_status == "Approved"
+def notify_approval(r):
+    """Approved (by the manager, or no manager needed): the Admin Team makes the final booking and uploads the
+    voucher. The employee hears next when the voucher is emailed."""
+    trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
+    send_mail(TRAVEL_DESK_TO,
+              with_ref(r, f"Approved - final booking needed: {r['EmpName']} ({r['EmpCode']}) - {trip}"),
+              final_booking_email_html(r), cc=TRAVEL_DESK_CC)
+
+
+def notify_rejection(r, comment):
+    """Rejected: separate emails to the employee (with the manager's reason) and the Admin Team (cancel the
+    tentative booking)."""
     who = f"{html.escape(r['EmpName'])} ({html.escape(r['EmpCode'])})"
     trip = f"{r['PlaceFrom']} to {r['PlaceTo']}"
     dates = f"{fmt_date(r['FromDate'])} to {fmt_date(r['ToDate'])}"
-    has_booking = bool(r.get("PropertyName"))
-    multi = len(booking_options(r)) > 1
-    comment_box = reason_box_html("Manager comment", comment) if (approved and comment and not direct) else ""
-
-    if approved:
-        how = ("no manager approval was required (no reporting manager on record)" if direct
-               else f"approved by {html.escape(r['ManagerName'])}")
-        emp_subject = with_ref(r, f"Your trip to {r['PlaceTo']} is approved")
-        emp_body = email_html(
-            ref_badge_html(r),
-            f"<p>Dear {html.escape(r['EmpName'])},</p>",
-            f"<p>Your trip from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} ({dates}) "
-            "is <b>approved</b>." + (" Here is your final booking:" if has_booking else "") + "</p>",
-            approved_box_html(r, "Your booking") if has_booking else "",
-            comment_box,
-            details_table_html(r, booking=False),
-        )
-        desk_subject = with_ref(r, f"Approved: travel booking for {r['EmpName']} ({r['EmpCode']}) - {trip}")
-        desk_body = email_html(
-            ref_badge_html(r),
-            "<p>Dear Travel Desk Team,</p>",
-            f"<p>The booking for {who} is <b>approved</b>: {how}. "
-            + (f"The manager chose <b>Option {selected_option_no(r)}</b>; please confirm it and release the "
-               "other options." if multi else "Please confirm the tickets and accommodation.") + "</p>",
-            approved_box_html(r, "Approved booking") if has_booking else "",
-            comment_box,
-            details_table_html(r, booking=False),
-        )
-    else:
-        emp_subject = with_ref(r, "Your travel request was rejected")
-        emp_body = email_html(
-            ref_badge_html(r),
-            f"<p>Dear {html.escape(r['EmpName'])},</p>",
-            f"<p>Your travel request from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} ({dates}) "
-            f"has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
-            "The Travel Desk will cancel the tentative booking.</p>",
-            reason_box_html("Reason for rejection", comment or "-"),
-            details_table_html(r, booking=False),
-        )
-        desk_subject = with_ref(r, f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}")
-        desk_body = email_html(
-            ref_badge_html(r),
-            "<p>Dear Travel Desk Team,</p>",
-            f"<p>The booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
-            "<b>Please cancel the tentative tickets and accommodation below.</b></p>",
-            reason_box_html("Reason for rejection", comment or "-"),
-            options_html(r, " - cancel"),
-            details_table_html(r, booking=False),
-        )
-
+    emp_subject = with_ref(r, "Your hotel booking request was rejected")
+    emp_body = email_html(
+        ref_badge_html(r),
+        f"<p>Dear {html.escape(r['EmpName'])},</p>",
+        f"<p>Your hotel booking request from {html.escape(r['PlaceFrom'])} to {html.escape(r['PlaceTo'])} "
+        f"({dates}) has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+        "The Admin Team will cancel the tentative booking.</p>",
+        reason_box_html("Reason for rejection", comment or "-"),
+        details_table_html(r, booking=False),
+    )
+    desk_subject = with_ref(r, f"Rejected - cancel booking: {r['EmpName']} ({r['EmpCode']}) - {trip}")
+    desk_body = email_html(
+        ref_badge_html(r),
+        "<p>Dear Admin Team,</p>",
+        f"<p>The hotel booking for {who} has been <b>rejected</b> by {html.escape(r['ManagerName'])}. "
+        "<b>Please cancel the tentative booking below.</b></p>",
+        reason_box_html("Reason for rejection", comment or "-"),
+        options_html(r, " - cancel", admin=True),
+        details_table_html(r, booking=False),
+    )
     errors = []
     for to, cc, subject, body in (
         ([r["EmpEmail"]], None, emp_subject, emp_body),  # always straight to the employee
@@ -860,35 +998,47 @@ def _check_link(signer, request_id, template):
 
 def _parse_cost(raw):
     try:
-        cost = Decimal(raw.replace(",", "").replace("\u20b9", "").strip()).quantize(Decimal("0.01"))
+        cost = Decimal(raw.replace(",", "").replace("₹", "").strip()).quantize(Decimal("0.01"))
         return cost if Decimal("0") < cost < Decimal("10000000000") else None
     except (InvalidOperation, ValueError):
         return None
 
 
 def parse_booking_options(form, allow_multiple=True):
-    """Validate the Travel Desk form. Option 1 is required; every extra option row must be complete.
-    Returns (rows for re-display, options, errors) where errors maps 'field-index' -> message."""
-    areas, props, costs = form.getlist("booking_area"), form.getlist("property_name"), form.getlist("cost")
-    n = max(len(areas), len(props), len(costs), 1)
+    """Validate the Admin Team form. Choice 1 is required; every extra choice must be complete (Remarks are
+    optional). Returns (rows for re-display, options, errors) where errors maps 'field-index' -> message."""
+    fields = ("booking_area", "property_name", "cost", "occupancy", "refund", "remarks")
+    lists = {k: form.getlist(k) for k in fields}
+    n = max(max(len(v) for v in lists.values()), 1)
+    val = lambda k, i, limit: (lists[k][i] if i < len(lists[k]) else "").strip()[:limit]  # noqa: E731
     rows, options, errors = [], [], {}
     for i in range(n):
-        area = (areas[i] if i < len(areas) else "").strip()[:150]
-        prop = (props[i] if i < len(props) else "").strip()[:200]
-        raw = (costs[i] if i < len(costs) else "").strip()[:20]
-        rows.append({"booking_area": area, "property_name": prop, "cost": raw})
-        cost = _parse_cost(raw)
-        if not area:
+        row = {"booking_area": val("booking_area", i, 150), "property_name": val("property_name", i, 200),
+               "cost": val("cost", i, 20), "occupancy": val("occupancy", i, 100), "refund": val("refund", i, 30),
+               "remarks": val("remarks", i, 300)}
+        rows.append(row)
+        cost = _parse_cost(row["cost"])
+        if not row["booking_area"]:
             errors[f"booking_area-{i}"] = "Enter the place/area of the stay."
-        if not prop:
-            errors[f"property_name-{i}"] = "Enter the property name."
+        if not row["property_name"]:
+            errors[f"property_name-{i}"] = "Enter the hotel name."
         if cost is None:
-            errors[f"cost-{i}"] = "Enter the cost as a number, e.g. 12500."
-        options.append({"area": area, "property": prop, "cost": cost})
+            errors[f"cost-{i}"] = "Enter the total cost as a number, e.g. 12500."
+        if not row["occupancy"]:
+            errors[f"occupancy-{i}"] = "Enter the type of occupancy."
+        if row["refund"] not in REFUND_STATUSES:
+            errors[f"refund-{i}"] = "Choose the refund status."
+        options.append({"area": row["booking_area"], "property": row["property_name"], "cost": cost,
+                        "occupancy": row["occupancy"], "refund": row["refund"], "remarks": row["remarks"]})
     if n > (MAX_BOOKING_OPTIONS if allow_multiple else 1):
-        errors["form"] = (f"You can offer at most {MAX_BOOKING_OPTIONS} options." if allow_multiple else
+        errors["form"] = (f"You can offer at most {MAX_BOOKING_OPTIONS} choices." if allow_multiple else
                           "This employee has no reporting manager, so only one booking can be entered.")
     return rows, options, errors
+
+
+def _voucher_link(request_id):
+    """Relative link to the voucher page (for pages shown to the Admin Team)."""
+    return url_for("final_booking", request_id=request_id, t=make_token(_voucher_signer, request_id))
 
 
 @app.get("/desk/<request_id>")
@@ -899,7 +1049,7 @@ def desk_legacy(request_id):
 
 @app.route("/travel-desk-confirm/<request_id>", methods=["GET", "POST"])
 def travel_desk_confirm(request_id):
-    """Step 1 - the Travel Desk enters the booking (place/area, property, price) and sends it to the manager.
+    """Step 1 - the Admin Team enters the hotel choices and sends them to the manager.
     GET only shows the form (safe for mail link scanners); POST saves and emails the manager."""
     template = "travel_desk_confirm.html"
     token, err = _check_link(_desk_signer, request_id, template)
@@ -909,11 +1059,16 @@ def travel_desk_confirm(request_id):
     if not r:
         abort(404)
     saved = booking_options(r)  # e.g. after a failed manager email, show what was entered
+    blank = {"booking_area": "", "property_name": "", "cost": "", "occupancy": "", "refund": "", "remarks": ""}
     page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL, errors={},
-                rows=[{"booking_area": o["area"], "property_name": o["property"], "cost": f"{o['cost']:.2f}"}
-                      for o in saved] or [{"booking_area": "", "property_name": "", "cost": ""}])
+                voucher_link=None,
+                rows=[{"booking_area": o["area"], "property_name": o["property"], "cost": f"{o['cost']:.2f}",
+                       "occupancy": o["occupancy"], "refund": o["refund"], "remarks": o["remarks"]}
+                      for o in saved] or [blank])
 
     if r["Status"] != STATUS_BOOKING:
+        if r["Status"] == STATUS_FINAL:
+            page["voucher_link"] = _voucher_link(request_id)
         return render_template(template, state="already", **page)
     if request.method == "GET":
         return render_template(template, state="pending", **page)
@@ -924,26 +1079,27 @@ def travel_desk_confirm(request_id):
     if errors:
         return render_template(template, state="pending", **page), 400
 
-    to_status = "Approved" if direct else STATUS_MANAGER
+    to_status = STATUS_FINAL if direct else STATUS_MANAGER
     if not save_booking(request_id, options, to_status, comment=DIRECT_NOTE if direct else None):
         page["r"] = load_request(request_id)
         return render_template(template, state="already", **page)
     r = page["r"] = load_request(request_id)  # now includes the booking details
 
     if direct:
+        page["voucher_link"] = _voucher_link(request_id)  # book now, or later from the email
         try:
-            notify_decision(r, "Approved", "")
+            notify_approval(r)
         except Exception:  # noqa: BLE001
-            log.exception("Final emails failed for %s", request_id)
+            log.exception("Final-booking email failed for %s", request_id)
         return render_template(template, state="done", **page)
 
     try:
         send_mail([r["ManagerEmail"]],
-                  with_ref(r, f"Approval required: travel booking for {r['EmpName']} ({r['EmpCode']})"),
+                  with_ref(r, f"Approval required: hotel booking for {r['EmpName']} ({r['EmpCode']})"),
                   manager_email_html(r))
     except Exception:  # noqa: BLE001
         log.exception("Failed to email the manager for %s", request_id)
-        advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # details stay saved; the desk can retry
+        advance_status(request_id, STATUS_MANAGER, STATUS_BOOKING)  # details stay saved; the team can retry
         page["r"] = load_request(request_id)
         return render_template(template, state="pending", error=(
             "The booking was saved but could not be emailed to the manager. Please submit again."), **page), 502
@@ -952,24 +1108,29 @@ def travel_desk_confirm(request_id):
 
 @app.route("/review/<request_id>", methods=["GET", "POST"])
 def review(request_id):
-    """Step 2 - manager approves or rejects the booking. GET only shows the page; POST decides."""
+    """Step 2 - manager approves or rejects. GET only shows the page; POST decides. For a single choice, the
+    email's Approve button opens the page with quick=1, which submits the approval straight away."""
     token, err = _check_link(_review_signer, request_id, "review.html")
     if err:
         return err
     r = load_request(request_id)  # trust the DB record only
     if not r:
         abort(404)
+    opts = booking_options(r)
     page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL)
 
     if request.method == "GET":
         if r["Status"] != STATUS_MANAGER:
             return render_template("review.html", state="already", **page)
         decision = request.args.get("decision", "")
-        return render_template("review.html", state="pending", decision=decision, comment="", picked="", **page)
+        quick = decision == "approve" and request.args.get("quick") == "1" and len(opts) == 1
+        return render_template("review.html", state="quick" if quick else "pending", decision=decision,
+                               comment="", picked="", **page)
 
     decision = request.form.get("decision", "").lower()
-    comment = request.form.get("comment", "").strip()[:300]
+    comment = request.form.get("comment", "").strip()[:300] if decision == "reject" else ""
     picked = request.form.get("option", "")
+    acknowledged = request.form.get("ack") == "yes"
     page.update(picked=picked)
     if decision not in ("approve", "reject"):
         return render_template("review.html", state="pending", decision="", comment=comment,
@@ -980,27 +1141,105 @@ def review(request_id):
 
     option = option_no = None
     if decision == "approve":
-        options = booking_options(r)
-        if len(options) == 1 and not picked:
-            picked = "1"  # a single option is pre-selected
-        if options:
-            if not (picked.isdigit() and 1 <= int(picked) <= len(options)):
-                return render_template("review.html", state="pending", decision="approve", comment=comment,
-                                       error="Choose which booking option to approve.", **page), 400
+        if len(opts) == 1 and not picked:
+            picked = "1"  # a single choice is pre-selected
+        if opts:
+            if not (picked.isdigit() and 1 <= int(picked) <= len(opts)):
+                return render_template("review.html", state="pending", decision="approve", comment="",
+                                       error="Choose which hotel to approve.", **page), 400
             option_no = int(picked)
-            option = options[option_no - 1]
+            option = opts[option_no - 1]
+        if not acknowledged:
+            return render_template("review.html", state="pending", decision="approve", comment="",
+                                   error="Tick the box to acknowledge that the booking is non-refundable once "
+                                         "approved.", **page), 400
 
-    new_status = "Approved" if decision == "approve" else "Rejected"
-    if not claim_decision(request_id, new_status, comment, option=option, option_no=option_no):
+    new_status = STATUS_FINAL if decision == "approve" else "Rejected"
+    if not claim_decision(request_id, new_status, comment or None, option=option, option_no=option_no):
         page["r"] = load_request(request_id)
         return render_template("review.html", state="already", **page)
 
-    r = page["r"] = load_request(request_id)  # includes the chosen option for the final emails
+    r = page["r"] = load_request(request_id)  # includes the chosen choice for the emails
     try:
-        notify_decision(r, new_status, comment)
+        if decision == "approve":
+            notify_approval(r)
+        else:
+            notify_rejection(r, comment)
     except Exception:  # noqa: BLE001
-        log.exception("Final emails failed for %s", request_id)
+        log.exception("Decision emails failed for %s", request_id)
     return render_template("review.html", state="done", **page)
+
+
+def _safe_pdf_name(name, r):
+    """A plain file name for the attachment, e.g. 'Voucher_Taj.pdf'; falls back to the booking ref."""
+    base = re.sub(r"[^A-Za-z0-9 ._()-]+", "_", os.path.basename(name or "")).strip(" ._")[:120]
+    if not base.lower().endswith(".pdf"):
+        base = ""
+    return base or f"Booking-voucher-{booking_ref(r).lstrip('#')}.pdf"
+
+
+@app.route("/final-booking/<request_id>", methods=["GET", "POST"])
+def final_booking(request_id):
+    """Step 3 - after approval the Admin Team makes the final booking and uploads the voucher (PDF), which is
+    emailed to the employee with the manager in CC. GET only shows the page; POST uploads and sends."""
+    template = "final_booking.html"
+    token, err = _check_link(_voucher_signer, request_id, template)
+    if err:
+        return err
+    r = load_request(request_id)
+    if not r:
+        abort(404)
+    page = dict(r=r, token=token, fmt_date=fmt_date, booking_rows=booking_rows, logo_url=LOGO_URL)
+
+    if r["Status"] != STATUS_FINAL:
+        return render_template(template, state="already", **page)
+    if request.method == "GET":
+        return render_template(template, state="pending", **page)
+
+    upload = request.files.get("voucher")
+    content = upload.read(MAX_VOUCHER_BYTES + 1) if upload else b""
+    error = None
+    if not upload or not upload.filename:
+        error = "Choose the booking voucher (PDF) to upload."
+    elif not content.startswith(b"%PDF-"):
+        error = "The voucher must be a PDF file."
+    elif len(content) > MAX_VOUCHER_BYTES:
+        error = f"The voucher is too large. The maximum is {MAX_VOUCHER_BYTES // (1024 * 1024)} MB."
+    if error:
+        return render_template(template, state="pending", error=error, **page), 400
+
+    file_name = _safe_pdf_name(upload.filename, r)
+    if not save_voucher(request_id, file_name, content):
+        page["r"] = load_request(request_id)
+        return render_template(template, state="already", **page)
+    r = page["r"] = load_request(request_id)
+
+    cc = [r["ManagerEmail"]] if r.get("ManagerCode") and r.get("ManagerEmail") else None
+    try:
+        send_mail([r["EmpEmail"]],
+                  with_ref(r, f"Your hotel booking in {r['PlaceTo']} is confirmed - voucher attached"),
+                  voucher_email_html(r), cc=cc, attachments=[(file_name, "application/pdf", content)])
+    except Exception:  # noqa: BLE001
+        log.exception("Voucher email failed for %s", request_id)
+        advance_status(request_id, STATUS_BOOKED, STATUS_FINAL)  # the team can upload again
+        page["r"] = load_request(request_id)
+        return render_template(template, state="pending", error=(
+            "The voucher was saved but could not be emailed. Please upload it again."), **page), 502
+    log.info("Voucher for %s emailed to the employee%s", booking_ref(r), " (manager in CC)" if cc else "")
+    return render_template(template, state="done", file_name=file_name, **page)
+
+
+@app.get("/final-booking/<request_id>/voucher")
+def voucher_file(request_id):
+    """The uploaded voucher, for the Admin Team (same signed link as the upload page)."""
+    _, err = _check_link(_voucher_signer, request_id, "final_booking.html")
+    if err:
+        return err
+    v = load_voucher(request_id)
+    if not v:
+        abort(404)
+    name, content, _ = v
+    return send_file(io.BytesIO(content), mimetype="application/pdf", download_name=name)
 
 
 # --------------------------------------------------------------------------
@@ -1259,7 +1498,8 @@ def hr_dashboard(form=None, form_errors=None, status=200):
     }
     return render_template("hr_users.html", rows=rows, stats=stats, form=form or {}, form_errors=form_errors or {},
                            logo_url=LOGO_URL, show_hr_link=True, hr_active=True,
-                           session_minutes=HR_SESSION_MINUTES), status
+                           session_minutes=HR_SESSION_MINUTES, this_month=date.today().strftime("%Y-%m"),
+                           today=date.today().isoformat()), status
 
 
 @app.post("/user-management/save")
@@ -1289,7 +1529,7 @@ def hr_save():
                             status=400)
     _audit("UPDATE" if mapping_id else "ADD", before, values)
     who = values["emp_code"]
-    flash(f"Mapping for {who} {'updated' if mapping_id else 'added'}. New travel requests use it immediately.", "ok")
+    flash(f"Mapping for {who} {'updated' if mapping_id else 'added'}. New hotel booking requests use it immediately.", "ok")
     return redirect(url_for("hr_dashboard", q=who))
 
 
@@ -1313,6 +1553,125 @@ def hr_delete():
     _audit("DELETE", before)
     flash(f"Mapping for {before['emp_code']} deleted.", "ok")
     return redirect(url_for("hr_dashboard"))
+
+
+IST = timedelta(hours=5, minutes=30)  # the database stores times in UTC
+EXPORT_COLUMNS = (  # (header, width)
+    ("Booking Ref", 12), ("Status", 22), ("Requested on", 18), ("Emp Code", 11), ("Employee Name", 26),
+    ("Designation", 22), ("Department", 20), ("Employee Email", 30), ("Manager", 24), ("Manager Email", 30),
+    ("Travelling From", 18), ("Travelling To", 18), ("From (Date)", 13), ("To (Date)", 13), ("Nights", 8),
+    ("Reason of Travel", 36), ("Category of Room", 18), ("Preferred Location", 24), ("Preferred Hotel", 24),
+    ("Choices offered", 10), ("Approved choice", 10), ("Place/Area", 20), ("Hotel", 26), (COST_LABEL, 18),
+    ("Type of occupancy", 18), ("Refund status", 18), ("Remarks", 30), ("Decided on", 18),
+    ("Manager comment / Rejection reason", 36), ("Voucher emailed on", 18), ("Voucher file", 28),
+)
+
+
+def _ist(dt):
+    return dt + IST if isinstance(dt, datetime) else None
+
+
+def export_row(r):
+    """One spreadsheet row per request, in EXPORT_COLUMNS order."""
+    chosen = chosen_option(r) if is_approved(r) else {}
+    return [
+        r.get("BookingRefID"), r["Status"], _ist(r.get("CreatedAt")), r["EmpCode"], r["EmpName"],
+        r.get("Designation"), r.get("Department"), r.get("EmpEmail"), r.get("ManagerName") or "No manager (HOD)",
+        r.get("ManagerEmail") or None, r["PlaceFrom"], r["PlaceTo"], r["FromDate"], r["ToDate"],
+        (r["ToDate"] - r["FromDate"]).days, r.get("ReasonOfTravel"), r.get("RoomCategory"),
+        r.get("PreferredLocation"), r.get("PreferredHotel"), len(booking_options(r)) or None,
+        selected_option_no(r) if is_approved(r) else None,
+        r.get("BookingArea"), r.get("PropertyName"), r.get("Cost"),
+        chosen.get("occupancy") or None, chosen.get("refund") or None, chosen.get("remarks") or None,
+        _ist(r.get("ActionedAt")), r.get("ActionComment") or r.get("RejectionReason"),
+        _ist(r.get("VoucherUploadedAt")), r.get("VoucherFileName"),
+    ]
+
+
+def build_export_xlsx(rows, start, end, basis):
+    """The booking export as .xlsx bytes: a 'Bookings' sheet (filterable, frozen header) and an 'About' sheet."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bookings"
+    ws.append([h for h, _ in EXPORT_COLUMNS])
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="681313")
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+    for r in rows:
+        ws.append(export_row(r))
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"  # text typed by users is never a formula
+            elif isinstance(cell.value, datetime):
+                cell.number_format = "dd-mmm-yyyy hh:mm"
+            elif isinstance(cell.value, date):
+                cell.number_format = "dd-mmm-yyyy"
+            elif isinstance(cell.value, Decimal):
+                cell.number_format = "#,##0.00"
+    for i, (_, width) in enumerate(EXPORT_COLUMNS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+    ws.row_dimensions[1].height = 32
+    ws.freeze_panes = "B2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(EXPORT_COLUMNS))}{max(len(rows) + 1, 2)}"
+
+    about = wb.create_sheet("About")
+    for line in (
+        ("Hotel booking export", None),
+        ("Dates", f"{start:%d-%b-%Y} to {end:%d-%b-%Y}"),
+        ("Filtered by", "Request date" if basis == "created" else "Check-in date (From)"),
+        ("Requests", len(rows)),
+        ("Generated", (datetime.utcnow() + IST).strftime("%d-%b-%Y %H:%M") + " (India time)"),
+        ("Note", "Type of occupancy, Refund status and Remarks are Admin Team fields: do not share them with "
+                 "employees or managers."),
+    ):
+        about.append(line)
+    about["A1"].font = Font(bold=True, size=13)
+    about.column_dimensions["A"].width = 16
+    about.column_dimensions["B"].width = 70
+
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def _export_range(args):
+    """(start, end, label) from ?mode=month&month=YYYY-MM or ?mode=range&from=YYYY-MM-DD&to=YYYY-MM-DD."""
+    if args.get("mode", "month") == "month":
+        year, month = (int(x) for x in args.get("month", "").split("-"))
+        start = date(year, month, 1)
+        end = date(year, month, calendar.monthrange(year, month)[1])
+        return start, end, f"{start:%b-%Y}"
+    start, end = date.fromisoformat(args.get("from", "")), date.fromisoformat(args.get("to", ""))
+    if end < start:
+        raise ValueError("end before start")
+    return start, end, f"{start:%d-%b-%Y}_to_{end:%d-%b-%Y}"
+
+
+@app.get("/user-management/export")
+def hr_export():
+    """Download every hotel booking request in a month or date range as an Excel file."""
+    basis = "checkin" if request.args.get("basis") == "checkin" else "created"
+    try:
+        start, end, label = _export_range(request.args)
+    except ValueError:
+        flash("Choose a month, or a From and To date (To on or after From), to export.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    try:
+        rows = export_requests(start, end, basis)
+    except Exception:  # noqa: BLE001
+        log.exception("Export query failed")
+        flash("Could not read the bookings from the database. Please try again.", "bad")
+        return redirect(url_for("hr_dashboard"))
+    _audit("EXPORT", after=f"{start}..{end} by {basis}: {len(rows)} requests")
+    return Response(build_export_xlsx(rows, start, end, basis),
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Hotel-bookings_{label}.xlsx"'})
 
 
 @app.get("/user-management/api/lookup/<code>")

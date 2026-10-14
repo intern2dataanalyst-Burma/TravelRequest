@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex">
-  <title>Travel Desk Booking | Hunger Pangs</title>
+  <title>Admin Team Booking | Hunger Pangs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -24,6 +24,8 @@
     .option-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
     .option-title { font-weight: 700; color: var(--hp-maroon); font-size: .95rem; }
     .option-sub { font-weight: 500; color: var(--hp-muted); font-size: .8rem; margin-left: .35rem; }
+    .admin-only { margin-top: 1rem; padding-top: .9rem; border-top: 1px dashed var(--hp-line-strong); }
+    .admin-tag { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6d5f0c; background: #fbf3d2; border-radius: 999px; padding: .15rem .6rem; margin-bottom: .75rem; }
     .btn-remove { border: 0; background: transparent; color: var(--hp-muted); font-size: .85rem; font-weight: 600; padding: .25rem .5rem; border-radius: 8px; }
     .btn-remove:hover { color: #9b3523; background: #fbeae6; }
     .btn-add { border: 1px dashed var(--hp-line-strong); background: transparent; color: var(--hp-terracotta); font-weight: 600; font-size: .9rem; border-radius: 10px; padding: .6rem 1rem; width: 100%; margin-top: .85rem; }
@@ -34,8 +36,59 @@
   </style>
 </head>
 <body>
-  {% set app_name = 'Travel Desk Booking' %}
+  {% set app_name = 'Admin Team Booking' %}
   {% include "_header.html" %}
+
+  {# One choice's fields. row is None for the empty "Add another choice" template. #}
+  {% macro choice_fields(row, i) %}
+    {% set e = errors if row else {} %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Place/Area<span class="req">*</span></label>
+        <input type="text" class="form-control {{ 'is-invalid' if e['booking_area-%d' % i] }}" name="booking_area"
+               maxlength="150" placeholder="e.g. Indiranagar" value="{{ row.booking_area if row }}" required>
+        <div class="invalid-feedback">{{ e['booking_area-%d' % i] or 'Enter the place/area of the stay.' }}</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Hotel<span class="req">*</span></label>
+        <input type="text" class="form-control {{ 'is-invalid' if e['property_name-%d' % i] }}" name="property_name"
+               maxlength="200" placeholder="e.g. The Leela Palace" value="{{ row.property_name if row }}" required>
+        <div class="invalid-feedback">{{ e['property_name-%d' % i] or 'Enter the hotel name.' }}</div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">{{ cost_label }}<span class="req">*</span></label>
+        <div class="input-group has-validation">
+          <span class="input-group-text">&#8377;</span>
+          <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if e['cost-%d' % i] }}" name="cost"
+                 maxlength="16" placeholder="e.g. 12500" value="{{ row.cost if row }}" pattern="[0-9,]+(\.[0-9]{1,2})?" required>
+          <div class="invalid-feedback">{{ e['cost-%d' % i] or 'Enter the total cost as a number, e.g. 12500.' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="admin-only">
+      <div class="admin-tag"><i class="fas fa-eye-slash"></i> Admin Team only &middot; not shown to the manager or employee</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Type of occupancy<span class="req">*</span></label>
+          <input type="text" class="form-control {{ 'is-invalid' if e['occupancy-%d' % i] }}" name="occupancy" list="occupancyTypes"
+                 maxlength="100" placeholder="e.g. Single" value="{{ row.occupancy if row }}" required>
+          <div class="invalid-feedback">{{ e['occupancy-%d' % i] or 'Enter the type of occupancy.' }}</div>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Refund status<span class="req">*</span></label>
+          <select class="form-select {{ 'is-invalid' if e['refund-%d' % i] }}" name="refund" required>
+            <option value="" {{ 'selected' if not row or not row.refund }} disabled>Select</option>
+            {% for s in refund_statuses %}<option {{ 'selected' if row and row.refund == s }}>{{ s }}</option>{% endfor %}
+          </select>
+          <div class="invalid-feedback">{{ e['refund-%d' % i] or 'Choose the refund status.' }}</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Remarks <span class="fw-normal" style="color: var(--hp-muted)">(optional)</span></label>
+          <textarea class="form-control" name="remarks" rows="2" maxlength="300" placeholder="e.g. Breakfast included; free cancellation until 2 days before">{{ row.remarks if row }}</textarea>
+        </div>
+      </div>
+    </div>
+  {% endmacro %}
 
   <main class="page">
 
@@ -43,7 +96,7 @@
     <div class="hp-card hp-card-pad text-center py-5">
       <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
       <h1 class="h4 fw-bold">This booking link is invalid or has expired</h1>
-      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new travel request.</p>
+      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new hotel booking request.</p>
     </div>
 
   {% else %}
@@ -57,15 +110,23 @@
     {% if state == 'done' %}
       <div class="notice notice-ok mb-3"><i class="fas fa-circle-check"></i><div>
         {% if direct %}
-          Booking saved. The request is <strong>approved</strong> (no reporting manager on record), and the employee has been notified.
+          Booking saved and <strong>approved</strong> (no reporting manager on record). Make the final booking, then upload the voucher.
         {% else %}
           Booking saved and sent for approval.
         {% endif %}
       </div></div>
     {% elif state == 'already' %}
       <div class="notice notice-info mb-3"><i class="fas fa-circle-info"></i><div>
-        This booking has already been sent. Current status: <strong>{{ r.Status }}</strong>. No further action is needed.
+        This booking has already been sent. Current status: <strong>{{ r.Status }}</strong>.
+        {% if not voucher_link %}No further action is needed.{% endif %}
       </div></div>
+    {% endif %}
+    {% if voucher_link %}
+      <div class="hp-card hp-card-pad mb-3 d-flex flex-wrap gap-3 align-items-center justify-content-between">
+        <div><strong style="color: var(--hp-ink)">Next: final booking</strong>
+          <div class="help m-0">Book the hotel, then upload the voucher (PDF). The link is also in your email.</div></div>
+        <a class="btn btn-hp" href="{{ voucher_link }}"><i class="fas fa-file-arrow-up me-1"></i> Upload Booking Voucher</a>
+      </div>
     {% endif %}
 
     <div class="hp-card hp-card-pad mb-3">
@@ -75,7 +136,7 @@
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
           ('Duration', fmt_duration(r.FromDate, r.ToDate)),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
-          ('Preferred Location', r.PreferredLocation or '-'),
+          ('Preferred Location', r.PreferredLocation or '-'), ('Preferred Hotel', r.PreferredHotel or '-'),
           ('Approving manager', r.ManagerName or 'None (no reporting manager on record)')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
       {% endfor %}
@@ -84,12 +145,14 @@
     {% set saved = booking_options(r) %}
     {% if state != 'pending' and saved %}
     <div class="hp-card hp-card-pad mb-3">
-      <h2 class="card-title">Booking options sent</h2>
-      {% set chosen = selected_option_no(r) if r.Status == 'Approved' else none %}
+      <h2 class="card-title">{{ 'Hotel choices sent' if saved|length > 1 else 'Booking sent' }}</h2>
+      {% set chosen = selected_option_no(r) if is_approved(r) else none %}
       {% for o in saved %}
         <div class="opt-view {{ 'chosen' if chosen == loop.index }}">
-          <div class="option-title pt-2">Option {{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok ms-1">Approved</span>{% endif %}</div>
-          {% for label, value in option_rows(o) %}
+          {% if saved|length > 1 or chosen %}
+          <div class="option-title pt-2">{{ choice_label(loop.index, saved|length) }}{% if chosen == loop.index %} <span class="pill pill-ok ms-1">Approved</span>{% endif %}</div>
+          {% endif %}
+          {% for label, value in option_rows(o, true) %}
             <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
           {% endfor %}
         </div>
@@ -106,49 +169,26 @@
 
       <div id="options">
         {% for row in rows %}
-          {% set i = loop.index0 %}
           <div class="option" data-option>
             <div class="option-head">
-              <div class="option-title"><span data-num>Option {{ loop.index }}</span>{% if loop.first %}<span class="option-sub">required</span>{% endif %}</div>
+              <div class="option-title"><span data-num>Choice {{ loop.index }}</span>{% if loop.first %}<span class="option-sub">required</span>{% endif %}</div>
               {% if not loop.first %}<button type="button" class="btn-remove" data-remove><i class="fas fa-xmark me-1"></i>Remove</button>{% endif %}
             </div>
-            <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label">Place/Area<span class="req">*</span></label>
-                <input type="text" class="form-control {{ 'is-invalid' if errors['booking_area-%d' % i] }}" name="booking_area"
-                       maxlength="150" placeholder="e.g. Indiranagar" value="{{ row.booking_area }}" required>
-                <div class="invalid-feedback">{{ errors['booking_area-%d' % i] or 'Enter the place/area of the stay.' }}</div>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Property Name<span class="req">*</span></label>
-                <input type="text" class="form-control {{ 'is-invalid' if errors['property_name-%d' % i] }}" name="property_name"
-                       maxlength="200" placeholder="e.g. The Leela Palace" value="{{ row.property_name }}" required>
-                <div class="invalid-feedback">{{ errors['property_name-%d' % i] or 'Enter the property name.' }}</div>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Cost<span class="req">*</span></label>
-                <div class="input-group has-validation">
-                  <span class="input-group-text">&#8377;</span>
-                  <input type="text" inputmode="decimal" class="form-control {{ 'is-invalid' if errors['cost-%d' % i] }}" name="cost"
-                         maxlength="16" placeholder="e.g. 12500" value="{{ row.cost }}" pattern="[0-9,]+(\.[0-9]{1,2})?" required>
-                  <div class="invalid-feedback">{{ errors['cost-%d' % i] or 'Enter the cost as a number, e.g. 12500.' }}</div>
-                </div>
-              </div>
-            </div>
+            {{ choice_fields(row, loop.index0) }}
           </div>
         {% endfor %}
       </div>
 
       {% if not direct %}
-        <button type="button" class="btn-add" id="addOption"><i class="fas fa-plus me-1"></i> Add another option</button>
+        <button type="button" class="btn-add" id="addOption"><i class="fas fa-plus me-1"></i> Add another choice</button>
       {% endif %}
 
       <p class="help mt-3 mb-0">
         {% if direct %}
-          This employee has no reporting manager on record, so submitting approves the request and notifies them.
+          This employee has no reporting manager on record, so submitting approves the booking. You then upload the final voucher.
         {% else %}
-          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong>.
-          With more than one option, they choose which one to approve.
+          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong>
+          (without the Admin Team only fields). With more than one choice, they choose which one to approve.
         {% endif %}
       </p>
       <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
@@ -158,32 +198,17 @@
       </div>
     </form>
 
+    <datalist id="occupancyTypes">
+      <option value="Single"><option value="Double"><option value="Twin sharing"><option value="Triple">
+    </datalist>
+
     <template id="optionTemplate">
       <div class="option" data-option>
         <div class="option-head">
           <div class="option-title"><span data-num></span></div>
           <button type="button" class="btn-remove" data-remove><i class="fas fa-xmark me-1"></i>Remove</button>
         </div>
-        <div class="row g-3">
-          <div class="col-md-6">
-            <label class="form-label">Place/Area<span class="req">*</span></label>
-            <input type="text" class="form-control" name="booking_area" maxlength="150" placeholder="e.g. Indiranagar" required>
-            <div class="invalid-feedback">Enter the place/area of the stay.</div>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">Property Name<span class="req">*</span></label>
-            <input type="text" class="form-control" name="property_name" maxlength="200" placeholder="e.g. The Leela Palace" required>
-            <div class="invalid-feedback">Enter the property name.</div>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">Cost<span class="req">*</span></label>
-            <div class="input-group has-validation">
-              <span class="input-group-text">&#8377;</span>
-              <input type="text" inputmode="decimal" class="form-control" name="cost" maxlength="16" placeholder="e.g. 12500" pattern="[0-9,]+(\.[0-9]{1,2})?" required>
-              <div class="invalid-feedback">Enter the cost as a number, e.g. 12500.</div>
-            </div>
-          </div>
-        </div>
+        {{ choice_fields(none, 0) }}
       </div>
     </template>
 
@@ -195,7 +220,7 @@
 
       function renumber() {
         const opts = list.querySelectorAll('[data-option]');
-        opts.forEach((el, i) => { el.querySelector('[data-num]').textContent = 'Option ' + (i + 1); });
+        opts.forEach((el, i) => { el.querySelector('[data-num]').textContent = 'Choice ' + (i + 1); });
         if (addBtn) addBtn.classList.toggle('d-none', opts.length >= MAX);
       }
       if (addBtn) addBtn.addEventListener('click', () => {
@@ -208,7 +233,7 @@
         const btn = e.target.closest('[data-remove]');
         if (btn) { btn.closest('[data-option]').remove(); renumber(); }
       });
-      // Client-side check mirrors the server's: every field of every option is required, cost must be a number
+      // Client-side check mirrors the server's: every field except Remarks is required, cost must be a number
       form.addEventListener('submit', (e) => {
         form.classList.add('was-validated');
         if (!form.checkValidity()) { e.preventDefault(); form.querySelector(':invalid')?.focus(); }

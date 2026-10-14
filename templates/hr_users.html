@@ -56,6 +56,11 @@
     .hint.warn { color: #8a6d0b; }
     .btn-danger-soft { background: #c54b36; border: 1px solid #c54b36; color: #fff; border-radius: 10px; font-weight: 600; padding: .6rem 1.2rem; }
     .btn-danger-soft:hover { background: #a83c29; color: #fff; }
+    .btn-hp-outline { border-radius: 10px; font-weight: 600; font-size: .93rem; padding: .7rem 1.2rem; background: #fff; border: 1px solid var(--hp-line-strong); color: var(--hp-ink); }
+    .btn-hp-outline:hover { border-color: var(--hp-terracotta); color: var(--hp-terracotta); background: #fff; }
+    .seg { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+    .seg label { display: block; border: 1px solid var(--hp-line-strong); border-radius: 10px; padding: .6rem .8rem; text-align: center; font-weight: 600; cursor: pointer; color: var(--hp-muted); }
+    .seg input:checked + label { border-color: var(--hp-terracotta); color: var(--hp-maroon); background: #fdf3ec; box-shadow: 0 0 0 1px var(--hp-terracotta); }
   </style>
 </head>
 <body>
@@ -66,13 +71,14 @@
       <div>
         <div class="eyebrow mb-2">HR &middot; Approval routing</div>
         <h1>User Management</h1>
-        <p>Employee &rarr; manager mappings. Changes apply to new travel requests immediately.</p>
+        <p>Employee &rarr; manager mappings. Changes apply to new hotel booking requests immediately.</p>
       </div>
       <div class="d-flex gap-2">
         <form method="post" action="{{ url_for('hr_logout') }}" class="m-0">
           <input type="hidden" name="csrf" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-hp-ghost"><i class="fas fa-lock me-1"></i> Lock</button>
         </form>
+        <button type="button" class="btn btn-hp-outline" id="exportBtn"><i class="fas fa-file-excel me-1"></i> Export bookings</button>
         <button type="button" class="btn btn-hp" id="addBtn"><i class="fas fa-plus me-1"></i> Add mapping</button>
       </div>
     </div>
@@ -170,12 +176,56 @@
           <input type="hidden" name="csrf" value="{{ csrf_token() }}">
           <input type="hidden" name="id" id="d_id">
           <p class="mb-2">Delete the mapping for <strong id="d_who"></strong>?</p>
-          <p class="help mb-0">Without a mapping, this employee's travel requests skip manager approval, as for a HOD.
+          <p class="help mb-0">Without a mapping, this employee's hotel booking requests skip manager approval, as for a HOD.
             To change their manager instead, use <strong>Edit</strong>.</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-hp-ghost" data-bs-dismiss="modal">Cancel</button>
           <button type="submit" class="btn btn-danger-soft"><i class="fas fa-trash me-1"></i> Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Export bookings (Excel) -->
+  <div class="modal fade" id="exportModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <form class="modal-content" method="get" action="{{ url_for('hr_export') }}" id="exportForm">
+        <div class="modal-header">
+          <h2 class="modal-title fs-5">Export bookings to Excel</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <label class="form-label">Period</label>
+          <div class="seg mb-3">
+            <div><input type="radio" class="btn-check" name="mode" id="x_month" value="month" checked><label for="x_month"><i class="fas fa-calendar me-1"></i> Full month</label></div>
+            <div><input type="radio" class="btn-check" name="mode" id="x_range" value="range"><label for="x_range"><i class="fas fa-calendar-week me-1"></i> Custom dates</label></div>
+          </div>
+          <div id="x_monthBlock">
+            <label class="form-label" for="x_monthVal">Month</label>
+            <input type="month" class="form-control" id="x_monthVal" name="month" value="{{ this_month }}" required>
+          </div>
+          <div id="x_rangeBlock" class="row g-3 d-none">
+            <div class="col-6">
+              <label class="form-label" for="x_from">From</label>
+              <input type="date" class="form-control" id="x_from" name="from" max="{{ today }}" disabled required>
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="x_to">To</label>
+              <input type="date" class="form-control" id="x_to" name="to" value="{{ today }}" disabled required>
+              <div class="invalid-feedback">Must be on or after From.</div>
+            </div>
+          </div>
+          <label class="form-label mt-3" for="x_basis">Filter by</label>
+          <select class="form-select" id="x_basis" name="basis">
+            <option value="created">Request date (when the employee submitted)</option>
+            <option value="checkin">Check-in date (From date of the stay)</option>
+          </select>
+          <p class="help mb-0 mt-3">Includes every request in the period with its status, approved hotel, cost and the Admin Team only fields. Handle the file as confidential.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-hp-ghost" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-hp"><i class="fas fa-download me-1"></i> Download Excel</button>
         </div>
       </form>
     </div>
@@ -290,6 +340,28 @@
     ['emp', 'mgr'].forEach(kind => $('f_' + kind + '_code').addEventListener('input', () => {
       clearTimeout(timers[kind]); timers[kind] = setTimeout(() => lookup(kind), 350);
     }));
+
+    // ---- export
+    const exportModal = new bootstrap.Modal($('exportModal'));
+    $('exportBtn').addEventListener('click', () => exportModal.show());
+    function syncExport() {
+      const month = $('x_month').checked;
+      $('x_monthBlock').classList.toggle('d-none', !month);
+      $('x_rangeBlock').classList.toggle('d-none', month);
+      $('x_monthVal').disabled = !month;  // only the chosen period's fields are sent
+      $('x_from').disabled = $('x_to').disabled = month;
+    }
+    ['x_month', 'x_range'].forEach(id => $(id).addEventListener('change', syncExport));
+    $('x_from').addEventListener('change', () => { $('x_to').min = $('x_from').value; });
+    $('exportForm').addEventListener('submit', (e) => {
+      const to = $('x_to');
+      to.classList.toggle('is-invalid', !to.disabled && $('x_from').value && to.value < $('x_from').value);
+      if (!$('exportForm').checkValidity() || to.classList.contains('is-invalid')) {
+        e.preventDefault(); $('exportForm').classList.add('was-validated'); return;
+      }
+      setTimeout(() => exportModal.hide(), 300);  // the download starts; close the dialog
+    });
+    syncExport();
 
     render();
     {% if form_errors and not form_errors._ %}

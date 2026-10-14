@@ -5,3 +5,4 @@ msal>=1.28
 requests>=2.32
 python-dotenv>=1.0
 waitress>=3.0
+openpyxl>=3.1

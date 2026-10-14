@@ -18,7 +18,7 @@ On 10.10.30.90:
 | ODBC Driver 18 for SQL Server | `Get-OdbcDriver -Name "ODBC Driver 18 for SQL Server"` | Download from Microsoft ("ODBC Driver 18 for SQL Server") and install |
 | IIS URL Rewrite + Application Request Routing (ARR) | Already used by Mingalaba on port 9000 | Nothing to do |
 
-The database changes (migrations 001 to 005) are **already applied** to MingalabaDB. Do not run them again (they are safe to re-run, but not needed).
+Database: migrations 001 to 005 are **already applied** to MingalabaDB. **Migration 006** (`deploy/migrate_006_hotel_booking.sql`: the Preferred Hotel column and the voucher table) must be applied before this version runs; it is safe to re-run. Open it in SQL Server Management Studio connected to MingalabaDB and click **Execute**.
 
 ---
 
@@ -89,16 +89,17 @@ From any PC or phone:
 | Open | Expect |
 |---|---|
 | http://mingalaba.hungerpangs.com:9000/dashboard/travel/healthz | `ok` |
-| http://mingalaba.hungerpangs.com:9000/dashboard/travel/ | Portal login prompt, then **Submit Travel Request** |
+| http://mingalaba.hungerpangs.com:9000/dashboard/travel/ | Portal login prompt, then **Hotel booking request** |
 | http://mingalaba.hungerpangs.com:9000/ | The Mingalaba login, as before |
 
 Then do one full test request:
 1. Submit a request with your own Emp Code.
-2. The Travel Desk email arrives. Click **Enter Booking Details**, fill in an option, and click **Save & Send for Approval**.
-3. The manager email arrives. Approve or reject.
-4. The employee and the Travel Desk receive the final email.
+2. The Admin Team email arrives. Click **Enter Booking Details**, fill in a choice (including the Admin Team only fields), and click **Save & Send for Approval**.
+3. The manager email arrives. Click **Approve** (one click for a single choice).
+4. The Admin Team gets "Approved - final booking needed". Click **Upload Booking Voucher** and upload a PDF.
+5. The employee receives the voucher as an attachment, with the manager in CC.
 
-From an **office PC**, also open **User Management** in the header and unlock it with `HR_ADMIN_PASSWORD` from `.env`. From outside the office it shows "Office network only"; that is expected.
+From an **office PC**, also open the **User Management** tab, unlock it with `HR_ADMIN_PASSWORD` from `.env`, and try **Export bookings**. From outside the office it shows "Office network only"; that is expected.
 
 ---
 

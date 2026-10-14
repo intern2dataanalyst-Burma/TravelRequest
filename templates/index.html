@@ -12,7 +12,7 @@
   {% include "_brand.html" %}
   <style>
     .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; align-items: start; }
-    @media (min-width: 992px) { .layout { grid-template-columns: minmax(0, 1fr) 340px; gap: 2rem; } .aside { position: sticky; top: 1.5rem; } }
+    @media (min-width: 992px) { .layout { grid-template-columns: minmax(0, 1fr) 340px; gap: 2rem; } .aside { position: sticky; top: 7.5rem; } }
 
     /* Form sections */
     .fsection + .fsection { border-top: 1px solid var(--hp-line); margin-top: 1.75rem; padding-top: 1.75rem; }
@@ -69,8 +69,8 @@
 
     <div id="formView">
       <div class="page-head">
-        <div class="eyebrow mb-2">Travel &amp; accommodation</div>
-        <h1>Submit Travel Request</h1>
+        <div class="eyebrow mb-2">Hotel booking</div>
+        <h1>Hotel booking request</h1>
       </div>
 
       <div id="alertBox"></div>
@@ -142,7 +142,7 @@
           <section class="fsection">
             <div class="fsection-head">
               <div class="fsection-num">03</div>
-              <h2>Accommodation</h2>
+              <h2>Occupancy</h2>
             </div>
             <div class="row g-3">
               <div class="col-md-5">
@@ -157,12 +157,16 @@
                 <label for="preferred_location" class="form-label">Preferred Location <span class="fw-normal" style="color: var(--hp-muted)">(near to outlet, optional)</span></label>
                 <input type="text" class="form-control" id="preferred_location" name="preferred_location" maxlength="150" placeholder="Outlet name or area">
               </div>
+              <div class="col-12">
+                <label for="preferred_hotel" class="form-label">Preferred Hotel name <span class="fw-normal" style="color: var(--hp-muted)">(optional)</span></label>
+                <input type="text" class="form-control" id="preferred_hotel" name="preferred_hotel" maxlength="200" placeholder="e.g. Lemon Tree, Andheri">
+              </div>
             </div>
           </section>
 
           <div class="form-actions">
             <button type="button" class="btn btn-hp-ghost" id="resetBtn">Reset</button>
-            <button type="submit" class="btn btn-hp" id="submitBtn"><span id="submitLabel">Submit to Travel Desk</span> <i class="fas fa-arrow-right ms-1"></i></button>
+            <button type="submit" class="btn btn-hp" id="submitBtn"><span id="submitLabel">Submit to Admin Team</span> <i class="fas fa-arrow-right ms-1"></i></button>
           </div>
         </form>
 
@@ -177,11 +181,15 @@
               </li>
               <li>
                 <div class="route-dot desk"><i class="fas fa-ticket"></i></div>
-                <div><div class="route-role">Step 2 &middot; Travel Desk</div><div class="route-name">Travel Desk</div><div class="route-sub">Books tickets and stay</div></div>
+                <div><div class="route-role">Step 2 &middot; Admin Team</div><div class="route-name">Admin Team</div><div class="route-sub">Finds hotel choices</div></div>
               </li>
               <li id="routeMgrStep">
                 <div class="route-dot" id="dotMgr"><i class="fas fa-user-check"></i></div>
                 <div><div class="route-role">Step 3 &middot; Manager Approval</div><div class="route-name" id="routeMgr">Your reporting manager</div><div class="route-sub" id="routeMgrSub">Reviews and approves the booking</div></div>
+              </li>
+              <li>
+                <div class="route-dot desk"><i class="fas fa-file-pdf"></i></div>
+                <div><div class="route-role">Step 4 &middot; Final booking</div><div class="route-name">Admin Team</div><div class="route-sub">Books the hotel and emails you the voucher</div></div>
               </li>
             </ol>
           </div>
@@ -259,7 +267,7 @@
       } else if (state === 'direct') {
         dot.className = 'route-dot'; dot.innerHTML = '<i class="fas fa-forward"></i>';
         $('routeMgr').textContent = 'Not required';
-        $('routeMgrSub').textContent = 'No reporting manager on record, so the request is approved once the Travel Desk confirms the booking.';
+        $('routeMgrSub').textContent = 'No reporting manager on record, so the request is approved once the Admin Team confirms the booking.';
       } else {
         dot.className = 'route-dot'; dot.innerHTML = '<i class="fas fa-user-check"></i>';
         $('routeMgr').textContent = 'Your reporting manager';
@@ -377,12 +385,13 @@
             ['Duration', $('tripNights').textContent],
             ['Reason of Travel', fd.get('travel_reason')],
             ['Category of Room', fd.get('room_category')], ['Preferred Location', fd.get('preferred_location') || '-'],
+            ['Preferred Hotel', fd.get('preferred_hotel') || '-'],
           ];
           $('summaryList').innerHTML = rows.map(r => `<div class="summary-row"><span>${esc(r[0])}</span><span>${esc(r[1])}</span></div>`).join('');
           $('refId').textContent = data.bookingRef || data.requestId;
           const badge = $('successBadge');
           badge.className = 'pill pill-pending';
-          badge.innerHTML = '<i class="fas fa-ticket"></i> With Travel Desk';
+          badge.innerHTML = '<i class="fas fa-hotel"></i> With Admin Team';
           $('formView').classList.add('d-none');
           $('successView').classList.remove('d-none');
           window.scrollTo({ top: 0, behavior: 'smooth' });

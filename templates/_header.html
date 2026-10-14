@@ -1,16 +1,20 @@
-{# Brand header, styled like hungerpangs.com: cream bar, maroon wordmark, terracotta nav text #}
-<header class="hp-header">
-  <a class="hp-brand" href="{{ url_for('index') }}" aria-label="Hunger Pangs - Travel Accommodation Portal">
-    {% if logo_url %}
-      <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
-    {% else %}
-      <span class="hp-wordmark" role="img" aria-label="Hunger Pangs"></span>
-    {% endif %}
-  </a>
-  <nav class="hp-nav">
-    <a href="{{ url_for('index') }}" class="nav-title {{ 'active' if show_hr_link and not hr_active }}">{{ app_name or 'Travel Accommodation Portal' }}</a>
+{# Brand header: logo bar plus a tab strip on the left; both stay fixed at the top while the page scrolls #}
+<div class="hp-top">
+  <header class="hp-header">
+    <a class="hp-brand" href="{{ url_for('index') }}" aria-label="Hunger Pangs - Travel Accommodation Portal">
+      {% if logo_url %}
+        <img src="{{ logo_url }}" alt="Hunger Pangs" class="hp-logo-img" onerror="this.style.display='none'">
+      {% else %}
+        <span class="hp-wordmark" role="img" aria-label="Hunger Pangs"></span>
+      {% endif %}
+    </a>
+  </header>
+  <nav class="hp-tabs" aria-label="Sections">
     {% if show_hr_link %}
-      <a href="{{ url_for('hr_dashboard') }}" class="{{ 'active' if hr_active }}"><i class="fas fa-users-gear me-1"></i>User Management</a>
+      <a href="{{ url_for('index') }}" class="hp-tab {{ 'active' if not hr_active }}" {{ 'aria-current="page"'|safe if not hr_active }}><i class="fas fa-hotel"></i>Travel Accommodation Portal</a>
+      <a href="{{ url_for('hr_dashboard') }}" class="hp-tab {{ 'active' if hr_active }}" {{ 'aria-current="page"'|safe if hr_active }}><i class="fas fa-users-gear"></i>User Management</a>
+    {% else %}
+      <span class="hp-tab active" aria-current="page">{{ app_name or 'Travel Accommodation Portal' }}</span>
     {% endif %}
   </nav>
-</header>
+</div>

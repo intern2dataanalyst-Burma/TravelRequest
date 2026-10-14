@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Final Booking | Hunger Pangs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  {% include "_brand.html" %}
+  <style>
+    .page { max-width: 760px; }
+    .card-title { font-size: 1.08rem; font-weight: 700; margin: 0 0 1rem; }
+    .summary-row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--hp-line); font-size: .92rem; }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row span:first-child { color: var(--hp-muted); white-space: nowrap; }
+    .summary-row span:last-child { font-weight: 600; color: var(--hp-ink); text-align: right; }
+    .chosen-box { border: 2px solid var(--hp-terracotta); background: #fdf3ec; border-radius: 12px; padding: .4rem 1rem; }
+    .drop { display: block; border: 2px dashed var(--hp-line-strong); border-radius: 14px; padding: 1.6rem 1rem; text-align: center; cursor: pointer; background: #fffdf9; transition: border-color .15s, background .15s; }
+    .drop:hover, .drop.over { border-color: var(--hp-terracotta); background: #fdf3ec; }
+    .drop i { font-size: 1.8rem; color: var(--hp-terracotta); }
+    .drop .file { font-weight: 700; color: var(--hp-ink); word-break: break-all; }
+    .drop.is-invalid { border-color: var(--hp-terracotta); background: #fdf3f0; }
+  </style>
+</head>
+<body>
+  {% set app_name = 'Final Booking' %}
+  {% include "_header.html" %}
+
+  <main class="page">
+
+  {% if state == 'invalid' %}
+    <div class="hp-card hp-card-pad text-center py-5">
+      <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
+      <h1 class="h4 fw-bold">This link is invalid or has expired</h1>
+      <p class="mb-0" style="color: var(--hp-muted)">Use the link from the latest "Approved - final booking needed" email.</p>
+    </div>
+
+  {% else %}
+    {% set direct = not r.ManagerCode %}
+    <div class="page-head">
+      <div class="eyebrow mb-2">Booking Ref: {{ booking_ref(r) }} &middot; {{ r.EmpCode }}</div>
+      <h1>{{ r.EmpName }}</h1>
+      <p>{{ r.Designation }}{% if r.Department %} &middot; {{ r.Department }}{% endif %}</p>
+    </div>
+
+    {% if state == 'done' %}
+      <div class="notice notice-ok mb-3"><i class="fas fa-circle-check"></i><div>
+        Voucher sent to {{ r.EmpName }}{% if not direct %}, with {{ r.ManagerName }} in CC{% endif %}. The booking is complete.
+      </div></div>
+    {% elif state == 'already' %}
+      <div class="notice notice-info mb-3"><i class="fas fa-circle-info"></i><div>
+        {% if r.Status == 'Booked' %}
+          The voucher has already been emailed to the employee. No further action is needed.
+          <a href="{{ url_for('voucher_file', request_id=r.RequestId, t=token) }}" target="_blank" rel="noopener">View the voucher</a>.
+        {% else %}
+          This request is not waiting for a final booking. Current status: <strong>{{ r.Status }}</strong>.
+        {% endif %}
+      </div></div>
+    {% endif %}
+
+    {% set opts = booking_options(r) %}
+    {% if is_approved(r) %}
+    <div class="hp-card hp-card-pad mb-3">
+      <h2 class="card-title">Approved booking{% if opts|length > 1 %} <span class="pill pill-ok ms-1">Choice {{ selected_option_no(r) }}</span>{% endif %}</h2>
+      <div class="chosen-box">
+        {% for label, value in booking_rows(r, true) %}
+          <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+        {% endfor %}
+      </div>
+      <p class="help mt-2 mb-0">Approved by {{ r.ManagerName or 'no one (no reporting manager on record)' }}{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}.</p>
+    </div>
+    {% endif %}
+
+    <div class="hp-card hp-card-pad mb-3">
+      <h2 class="card-title">Trip details</h2>
+      {% for label, value in [
+          ('Travelling From', r.PlaceFrom), ('Travelling To', r.PlaceTo),
+          ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
+          ('Duration', fmt_duration(r.FromDate, r.ToDate)),
+          ('Category of Room', r.RoomCategory), ('Preferred Hotel', r.PreferredHotel or '-'),
+          ('Employee email', r.EmpEmail), ('Manager (CC)', r.ManagerEmail if not direct else '-')] %}
+        <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+
+    {% if state == 'pending' %}
+    <form method="post" enctype="multipart/form-data" class="hp-card hp-card-pad" id="voucherForm" novalidate>
+      <h2 class="card-title">Upload the booking voucher</h2>
+      {% if error %}<div class="notice notice-bad mb-3"><i class="fas fa-triangle-exclamation"></i><div>{{ error }}</div></div>{% endif %}
+      <input type="hidden" name="t" value="{{ token }}">
+      <label class="drop" id="drop" for="voucher">
+        <i class="fas fa-file-pdf"></i>
+        <div class="mt-2 file" id="fileName">Choose the PDF voucher</div>
+        <div class="help m-0" id="fileHint">or drag it here &middot; PDF only, up to {{ max_voucher_mb }} MB</div>
+      </label>
+      <input type="file" class="d-none" id="voucher" name="voucher" accept="application/pdf,.pdf" required>
+      <p class="help mt-3 mb-0">
+        Submitting emails the voucher to <strong style="color: var(--hp-ink)">{{ r.EmpName }}</strong>
+        {% if not direct %}with <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong> in CC{% endif %}
+        and marks the booking as complete.
+      </p>
+      <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
+        <button type="submit" class="btn btn-hp" id="sendBtn"><i class="fas fa-paper-plane me-1"></i> Upload &amp; Send Voucher</button>
+      </div>
+    </form>
+    <script>
+      const MAX = {{ max_voucher_mb }} * 1024 * 1024;
+      const input = document.getElementById('voucher'), drop = document.getElementById('drop');
+      const nameEl = document.getElementById('fileName'), hint = document.getElementById('fileHint');
+      function check() {
+        const f = input.files[0];
+        drop.classList.remove('is-invalid');
+        if (!f) { nameEl.textContent = 'Choose the PDF voucher'; return false; }
+        nameEl.textContent = f.name;
+        const bad = !/\.pdf$/i.test(f.name) ? 'This is not a PDF file.' : f.size > MAX ? 'This file is larger than {{ max_voucher_mb }} MB.' : '';
+        hint.textContent = bad || (Math.round(f.size / 1024) + ' KB · ready to send');
+        if (bad) drop.classList.add('is-invalid');
+        return !bad;
+      }
+      input.addEventListener('change', check);
+      ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+      ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+      drop.addEventListener('drop', (e) => { if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; check(); } });
+      document.getElementById('voucherForm').addEventListener('submit', (e) => {
+        if (!check()) { e.preventDefault(); drop.classList.add('is-invalid'); return; }
+        const btn = document.getElementById('sendBtn');
+        btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Sending...';
+      });
+    </script>
+    {% endif %}
+  {% endif %}
+  </main>
+
+  <footer class="hp-footer"><div>Hunger Pangs &middot; Travel Accommodation Portal &middot; For internal use</div></footer>
+</body>
+</html>

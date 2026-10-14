@@ -6,21 +6,29 @@ Internal (KMS) portal for travel and accommodation requests, hosted on **10.10.3
 
 ## How it works
 
-1. **Employee submits** the form. Name, designation and department come from `tblEmployeeMaster`; the manager from the portal's own routing table `dbo.TravelApproverMapping` (maintained by HR in User Management). Status: `Pending Booking`.
-2. **Travel Desk books.** The Travel Desk (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with an **Enter Booking Details** button. It opens a form where they enter one or more accommodation options (Place/Area, Property Name, Cost; up to 5); **Save & Send for Approval** sets `Pending Manager Approval` and emails the manager every option.
-3. **Manager approves.** The manager's email lists the options and has **Approve** and **Reject** buttons that open a review page on the portal. To approve, the manager picks one option (pre-selected when there is only one); the chosen option becomes the final booking. A reason is required to reject.
-4. **Final emails** go to the employee and the Travel Desk: `Approved`, or `Rejected` with the reason (the Travel Desk is asked to cancel the tentative booking).
+1. **Employee submits** a hotel booking request. Name, designation and department come from `tblEmployeeMaster`; the manager from the portal's own routing table `dbo.TravelApproverMapping` (maintained by HR in User Management). Section 3 "Occupancy" has the room category, preferred location and an optional preferred hotel. Status: `Pending Booking`.
+2. **Admin Team proposes.** The Admin Team (To: Jigna, Mittal, Sagar; CC: Pooja) gets an email with an **Enter Booking Details** button. It opens a form with one or more choices (up to 5): Place/Area, Hotel, Total Cost of stay with GST (approx), plus **Admin Team only** fields: Type of occupancy, Refund status (Refundable / Non-refundable / Partial refundable) and optional Remarks. **Save & Send for Approval** sets `Pending Manager Approval` and emails the manager.
+3. **Manager approves.** The manager never sees the Admin Team only fields.
+   - One choice: the email shows the booking with no "Choice 1" label, and **Approve** approves in one click (the link opens a page that submits the approval immediately; the email states that an approved booking is non-refundable).
+   - Several choices: **Choose & Approve** opens the review page, where the manager picks Choice 1, 2, ... and must tick "I acknowledge that once approved, this booking is non-refundable." There is no comment box for approvals.
+   - **Reject** always requires a reason.
+   Approval sets `Pending Final Booking`.
+4. **Admin Team books.** They get an "Approved - final booking needed" email with **Upload Booking Voucher**. After booking, they upload the voucher (PDF, max 3 MB); the portal emails it as an attachment to the employee with the manager in CC and sets `Booked`.
+5. On rejection, the employee gets the reason and the Admin Team is asked to cancel the tentative booking.
 
-Employees with no reporting manager on record skip step 3: the Travel Desk's confirmation approves the request.
+Employees with no reporting manager on record skip step 3: the Admin Team's confirmation approves the request and goes straight to step 4.
 
-All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Messages). The links are signed with `SECRET_KEY` (separately for the Travel Desk and the manager) and expire after `REVIEW_LINK_MAX_AGE_DAYS` (30 by default). Opening a link changes nothing; the action is recorded only when the page is submitted. Links work only from the office network or VPN.
+All emails are plain HTML sent through Microsoft Graph (no Outlook Actionable Messages). The links are signed with `SECRET_KEY` (separate keys for the Admin Team booking form, the manager review and the voucher upload) and expire after `REVIEW_LINK_MAX_AGE_DAYS` (30 by default). Opening a link changes nothing on the server except the manager's 1-click Approve, whose page submits the approval itself.
 
-Database migrations (run once each, in order; all applied on MingalabaDB, 001-003 on 2026-10-12 and 004-005 on 2026-10-13):
+(The `.env` settings `TRAVEL_DESK_TO` / `TRAVEL_DESK_CC` keep their old names and hold the Admin Team addresses.)
+
+Database migrations (run once each, in order; 001-003 applied on 2026-10-12, 004-005 on 2026-10-13):
 - `deploy/migrate_001_status_length.sql` widens `TravelRequests.Status` to `nvarchar(30)`.
-- `deploy/migrate_002_booking_details.sql` adds `BookingArea`, `PropertyName` and `Cost` (the Travel Desk's booking details).
+- `deploy/migrate_002_booking_details.sql` adds `BookingArea`, `PropertyName` and `Cost` (the approved booking: Place/Area, Hotel, Total Cost).
 - `deploy/migrate_003_booking_ref.sql` adds `BookingRefID` (auto-numbered from 10001), shown as "Booking Ref: #10001" in emails.
-- `deploy/migrate_004_booking_options.sql` adds `BookingOptions` (JSON list of the Travel Desk's options) and `SelectedOption` (the one the manager approved).
+- `deploy/migrate_004_booking_options.sql` adds `BookingOptions` (JSON list of the Admin Team's choices, including the Admin Team only fields) and `SelectedOption` (the one the manager approved).
 - `deploy/migrate_005_travel_approver_mapping.sql` creates `TravelApproverMapping` (the portal's own routing table) and seeds it once from `checklist_empmanager_mapping`.
+- `deploy/migrate_006_hotel_booking.sql` adds `TravelRequests.PreferredHotel` and creates `TravelBookingVouchers` (the uploaded PDF vouchers). **Required by this version.**
 
 ## Deploying under /dashboard/travel (behind the Mingalaba app on port 9000)
 
@@ -71,6 +79,8 @@ The **User Management** tab lets HR add, edit and delete rows in `dbo.TravelAppr
 - By default it opens only from office/private networks (`HR_ALLOWED_NETWORKS`), even though the portal itself is public. Set it to `any` only once the portal runs on HTTPS.
 - Leaving the manager code blank marks the employee as a HOD (no manager approval). Deleting a row has the same effect.
 - Every add/edit/delete is written to `logs\portal.log` with the before/after values and the sender's IP.
+
+**Export bookings** (same tab) downloads every hotel booking request as an Excel file: a full month, or custom From/To dates, filtered by request date or check-in date. It includes the status, approved hotel, cost, voucher date and the Admin Team only fields, so treat the file as confidential. Exports are logged.
 
 ## Security note (public IP over HTTP)
 

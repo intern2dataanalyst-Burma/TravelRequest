@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex">
-  <title>Travel Request Approval | Hunger Pangs</title>
+  <title>Hotel Booking Approval | Hunger Pangs</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -27,7 +27,7 @@
     .btn-check:checked + .decision-option.reject i { background: var(--hp-terracotta); color: #fff; }
     .btn-check:focus-visible + .decision-option { box-shadow: 0 0 0 3px rgba(197,75,54,.2); }
 
-    /* Booking option radio cards */
+    /* Hotel choice radio cards */
     .opt-card { display: block; border: 1px solid var(--hp-line-strong); border-radius: 12px; padding: .75rem 1rem .5rem; cursor: pointer; background: #fff; transition: border-color .15s, background .15s, opacity .15s; }
     .opt-card + .opt-card, .opt-input + .opt-card { margin-top: .75rem; }
     .opt-card:hover { border-color: #c9bda1; }
@@ -40,10 +40,14 @@
     .opts-off .opt-card { opacity: .45; pointer-events: none; }
     .opt-card.static { cursor: default; }
     .opt-card.static.chosen { border: 2px solid var(--hp-terracotta); background: #fdf3ec; }
+
+    .ack { display: flex; gap: .7rem; align-items: flex-start; border: 1px solid #ecd9a6; background: #fdf8e6; border-radius: 12px; padding: .85rem 1rem; cursor: pointer; font-weight: 600; color: var(--hp-ink); }
+    .ack input { width: 1.15rem; height: 1.15rem; margin-top: .1rem; flex: 0 0 auto; accent-color: var(--hp-olive); }
+    .ack.is-invalid { border-color: var(--hp-terracotta); background: #fdf3f0; }
   </style>
 </head>
 <body>
-  {% set app_name = 'Travel Request Approval' %}
+  {% set app_name = 'Hotel Booking Approval' %}
   {% include "_header.html" %}
 
   <main class="page">
@@ -52,26 +56,47 @@
     <div class="hp-card hp-card-pad text-center py-5">
       <i class="fas fa-link-slash fa-2x mb-3" style="color: var(--hp-terracotta)"></i>
       <h1 class="h4 fw-bold">This approval link is invalid or has expired</h1>
-      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new travel request.</p>
+      <p class="mb-0" style="color: var(--hp-muted)">Ask the employee to submit a new hotel booking request.</p>
     </div>
 
   {% else %}
     {% set opts = booking_options(r) %}
+    {% set multi = opts|length > 1 %}
     <div class="page-head">
       <div class="eyebrow mb-2">Booking Ref: {{ booking_ref(r) }} &middot; {{ r.EmpCode }}</div>
       <h1>{{ r.EmpName }}</h1>
       <p>{{ r.Designation }}{% if r.Department %} &middot; {{ r.Department }}{% endif %}</p>
     </div>
 
+    {% if state == 'quick' %}
+      {# 1-click Approve from the email (single choice): approves as soon as the page opens #}
+      <form method="post" id="quickForm" class="hp-card hp-card-pad text-center mb-3">
+        <input type="hidden" name="t" value="{{ token }}">
+        <input type="hidden" name="decision" value="approve">
+        <input type="hidden" name="option" value="1">
+        <input type="hidden" name="ack" value="yes">
+        <div class="spinner-border mb-3" id="quickSpin" style="color: var(--hp-olive)" role="status"></div>
+        <h2 class="h5 fw-bold mb-2" id="quickTitle">Approving the booking...</h2>
+        <p class="help mb-3">By approving, you acknowledge that once approved, this booking is non-refundable.</p>
+        <button type="submit" class="btn btn-hp" id="quickBtn"><i class="fas fa-check me-1"></i> Approve now</button>
+      </form>
+      <script>
+        // Submit straight away; the button stays as a fallback if scripts are blocked
+        document.getElementById('quickBtn').classList.add('d-none');
+        document.getElementById('quickForm').submit();
+      </script>
+      <noscript><style>#quickSpin { display: none; } #quickBtn { display: inline-block !important; }</style></noscript>
+    {% endif %}
+
     {% if state == 'done' or state == 'already' %}
-      {% set ok = r.Status == 'Approved' %}
+      {% set ok = is_approved(r) %}
       <div class="notice {{ 'notice-info' if state == 'already' else 'notice-ok' if ok else 'notice-bad' }} mb-3">
         <i class="fas {{ 'fa-circle-info' if state == 'already' else 'fa-circle-check' if ok else 'fa-circle-xmark' }}"></i>
         <div>
           {% if state == 'done' %}
-            {{ 'Booking approved.' if ok else 'Booking rejected.' }}
+            {% if ok %}Booking approved. The Admin Team will make the final booking and email the voucher to {{ r.EmpName }}.{% else %}Booking rejected.{% endif %}
           {% else %}
-            This request was already <strong>{{ r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
+            This request was already <strong>{{ 'approved' if ok else r.Status | lower }}</strong>{% if r.ActionedAt %} on {{ fmt_date(r.ActionedAt) }}{% endif %}. No further action is needed.
           {% endif %}
         </div>
       </div>
@@ -79,11 +104,11 @@
       {% if opts %}
       <div class="hp-card hp-card-pad mb-3">
         {% set chosen = selected_option_no(r) if ok else none %}
-        <h2 class="card-title">{{ 'Approved booking' if ok else 'Booking options' }}</h2>
+        <h2 class="card-title">{{ 'Approved booking' if ok else ('Hotel choices' if multi else 'Booking') }}</h2>
         {% for o in opts %}
           {% if not ok or chosen == loop.index %}
           <div class="opt-card static {{ 'chosen' if chosen == loop.index }}">
-            <div class="opt-head">Option {{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok">Approved</span>{% endif %}</div>
+            {% if multi %}<div class="opt-head">Choice {{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok">Approved</span>{% endif %}</div>{% endif %}
             {% for label, value in option_rows(o) %}
               <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
             {% endfor %}
@@ -95,15 +120,16 @@
     {% endif %}
 
     {% if state == 'pending' %}
-      <div class="notice notice-info mb-3"><i class="fas fa-ticket"></i><div>
-        {% if opts|length > 1 %}
-          The Travel Desk has found <strong>{{ opts|length }} accommodation options</strong>. Choose one to approve, or reject the request.
+      <div class="notice notice-info mb-3"><i class="fas fa-hotel"></i><div>
+        {% if multi %}
+          The Admin Team has found <strong>{{ opts|length }} hotel choices</strong>. Choose one to approve, or reject the request.
         {% else %}
-          The Travel Desk has arranged tickets and accommodation for this trip. Please approve or reject the booking.
+          The Admin Team has arranged a hotel for this trip. Please approve or reject the booking.
         {% endif %}
       </div></div>
     {% endif %}
 
+    {% if state != 'quick' %}
     <div class="hp-card hp-card-pad mb-3">
       <h2 class="card-title">Trip details</h2>
       {% for label, value in [
@@ -111,13 +137,14 @@
           ('From (Date)', fmt_date(r.FromDate)), ('To (Date)', fmt_date(r.ToDate)),
           ('Duration', fmt_duration(r.FromDate, r.ToDate)),
           ('Reason of Travel', r.ReasonOfTravel or '-'), ('Category of Room', r.RoomCategory),
-          ('Preferred Location', r.PreferredLocation or '-')] %}
+          ('Preferred Location', r.PreferredLocation or '-'), ('Preferred Hotel', r.PreferredHotel or '-')] %}
         <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
       {% endfor %}
-      {% if r.Status in ('Approved', 'Rejected') and r.ActionComment %}
-        <div class="summary-row"><span>{{ 'Reason for rejection' if r.Status == 'Rejected' else 'Manager comment' }}</span><span>{{ r.ActionComment }}</span></div>
+      {% if r.Status == 'Rejected' and r.ActionComment %}
+        <div class="summary-row"><span>Reason for rejection</span><span>{{ r.ActionComment }}</span></div>
       {% endif %}
     </div>
+    {% endif %}
 
     {% if state == 'pending' %}
     <form method="post" class="hp-card hp-card-pad" id="decisionForm" novalidate>
@@ -137,52 +164,71 @@
 
       {% if opts %}
       <div id="optionsBlock" class="mb-3">
-        <label class="form-label">{{ 'Choose the option to approve' if opts|length > 1 else 'Booking to approve' }}<span class="req">*</span></label>
+        <label class="form-label">{{ 'Choose the hotel to approve' if multi else 'Booking' }}{% if multi %}<span class="req">*</span>{% endif %}</label>
         {% for o in opts %}
           {% set n = loop.index|string %}
-          <input type="radio" class="btn-check opt-input" name="option" id="opt{{ n }}" value="{{ n }}"
-                 {{ 'checked' if picked == n or opts|length == 1 }}>
-          <label class="opt-card" for="opt{{ n }}">
-            <div class="opt-head"><span class="opt-dot"></span>Option {{ n }}</div>
-            {% for label, value in option_rows(o) %}
-              <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
-            {% endfor %}
-          </label>
+          {% if multi %}
+            <input type="radio" class="btn-check opt-input" name="option" id="opt{{ n }}" value="{{ n }}" {{ 'checked' if picked == n }}>
+            <label class="opt-card" for="opt{{ n }}">
+              <div class="opt-head"><span class="opt-dot"></span>Choice {{ n }}</div>
+              {% for label, value in option_rows(o) %}
+                <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+              {% endfor %}
+            </label>
+          {% else %}
+            <input type="hidden" name="option" value="1">
+            <div class="opt-card static chosen">
+              {% for label, value in option_rows(o) %}
+                <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
+              {% endfor %}
+            </div>
+          {% endif %}
         {% endfor %}
-        <div class="invalid-feedback d-block d-none" id="optError">Choose which option to approve.</div>
+        <div class="invalid-feedback d-block d-none" id="optError">Choose which hotel to approve.</div>
       </div>
       {% endif %}
 
-      <label for="comment" class="form-label" id="commentLabel">Comment (optional)</label>
-      <textarea class="form-control" id="comment" name="comment" rows="3" maxlength="300"
-        placeholder="Shown to the employee">{{ comment }}</textarea>
+      <div id="approveBlock" class="d-none">
+        <label class="ack" id="ackBox" for="ack">
+          <input type="checkbox" id="ack" name="ack" value="yes">
+          <span>I acknowledge that once approved, this booking is non-refundable.<span class="req">*</span></span>
+        </label>
+      </div>
+
+      <div id="rejectBlock" class="d-none">
+        <label for="comment" class="form-label">Reason for rejection<span class="req">*</span></label>
+        <textarea class="form-control" id="comment" name="comment" rows="3" maxlength="300"
+          placeholder="Shown to the employee">{{ comment }}</textarea>
+      </div>
+
       <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
         <button type="submit" class="btn btn-hp"><span id="submitLabel">Submit decision</span> <i class="fas fa-arrow-right ms-1"></i></button>
       </div>
     </form>
     <script>
-      // Approve needs an option; reject needs a reason (the server enforces both too)
+      // Approve: hotel choice (if several) + acknowledgement; Reject: a reason. The server enforces both too.
       const form = document.getElementById('decisionForm');
-      const comment = document.getElementById('comment'), label = document.getElementById('commentLabel');
-      const optionsBlock = document.getElementById('optionsBlock'), optError = document.getElementById('optError');
+      const $ = (id) => document.getElementById(id);
+      const comment = $('comment'), ack = $('ack'), ackBox = $('ackBox');
+      const optionsBlock = $('optionsBlock'), optError = $('optError');
       function sync() {
-        const reject = document.getElementById('dReject').checked;
-        const approve = document.getElementById('dApprove').checked;
-        comment.required = reject;
-        label.innerHTML = reject ? 'Reason for rejection<span class="req">*</span>' : 'Comment (optional)';
+        const approve = $('dApprove').checked, reject = $('dReject').checked;
+        $('approveBlock').classList.toggle('d-none', !approve);
+        $('rejectBlock').classList.toggle('d-none', !reject);
+        comment.disabled = !reject;  // nothing is sent with an approval
         if (optionsBlock) optionsBlock.classList.toggle('opts-off', reject);
-        document.getElementById('submitLabel').textContent =
-          approve ? 'Confirm Approval' : reject ? 'Confirm Rejection' : 'Submit decision';
+        $('submitLabel').textContent = approve ? 'Confirm Approval' : reject ? 'Confirm Rejection' : 'Submit decision';
       }
       document.querySelectorAll('input[name=decision]').forEach(el => el.addEventListener('change', sync));
       document.querySelectorAll('input[name=option]').forEach(el => el.addEventListener('change', () => optError?.classList.add('d-none')));
+      ack.addEventListener('change', () => ackBox.classList.remove('is-invalid'));
       form.addEventListener('submit', (e) => {
-        const approve = document.getElementById('dApprove').checked;
-        const reject = document.getElementById('dReject').checked;
+        const approve = $('dApprove').checked, reject = $('dReject').checked;
         let ok = approve || reject;
-        if (approve && optionsBlock && !form.querySelector('input[name=option]:checked')) {
+        if (approve && optionsBlock && !form.querySelector('input[name=option]:checked, input[name=option][type=hidden]')) {
           optError.classList.remove('d-none'); ok = false;
         }
+        if (approve && !ack.checked) { ackBox.classList.add('is-invalid'); ok = false; }
         if (reject && !comment.value.trim()) { comment.classList.add('is-invalid'); ok = false; }
         if (!ok) { e.preventDefault(); }
       });
