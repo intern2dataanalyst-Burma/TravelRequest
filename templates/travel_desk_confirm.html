@@ -25,7 +25,6 @@
     .option-title { font-weight: 700; color: var(--hp-maroon); font-size: .95rem; }
     .option-sub { font-weight: 500; color: var(--hp-muted); font-size: .8rem; margin-left: .35rem; }
     .admin-only { margin-top: 1rem; padding-top: .9rem; border-top: 1px dashed var(--hp-line-strong); }
-    .admin-tag { display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6d5f0c; background: #fbf3d2; border-radius: 999px; padding: .15rem .6rem; margin-bottom: .75rem; }
     .btn-remove { border: 0; background: transparent; color: var(--hp-muted); font-size: .85rem; font-weight: 600; padding: .25rem .5rem; border-radius: 8px; }
     .btn-remove:hover { color: #9b3523; background: #fbeae6; }
     .btn-add { border: 1px dashed var(--hp-line-strong); background: transparent; color: var(--hp-terracotta); font-weight: 600; font-size: .9rem; border-radius: 10px; padding: .6rem 1rem; width: 100%; margin-top: .85rem; }
@@ -66,7 +65,6 @@
       </div>
     </div>
     <div class="admin-only">
-      <div class="admin-tag"><i class="fas fa-eye-slash"></i> Admin Team only &middot; not shown to the manager or employee</div>
       <div class="row g-3">
         <div class="col-md-6">
           <label class="form-label">Type of occupancy<span class="req">*</span></label>
@@ -183,14 +181,11 @@
         <button type="button" class="btn-add" id="addOption"><i class="fas fa-plus me-1"></i> Add another choice</button>
       {% endif %}
 
+      {% if direct %}
       <p class="help mt-3 mb-0">
-        {% if direct %}
-          This employee has no reporting manager on record, so submitting approves the booking. You then upload the final voucher.
-        {% else %}
-          Submitting saves these details and emails the booking to <strong style="color: var(--hp-ink)">{{ r.ManagerName }}</strong>
-          (without the Admin Team only fields). With more than one choice, they choose which one to approve.
-        {% endif %}
+        This employee has no reporting manager on record, so submitting approves the booking. You then upload the final voucher.
       </p>
+      {% endif %}
       <div class="d-flex justify-content-end mt-3 pt-3" style="border-top: 1px solid var(--hp-line)">
         <button type="submit" class="btn btn-hp">
           {{ 'Save & Confirm Booking' if direct else 'Save & Send for Approval' }} <i class="fas fa-arrow-right ms-1"></i>

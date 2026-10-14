@@ -705,8 +705,7 @@ def desk_email_html(r):
             "<b>no reporting manager on record</b>, so no approval is needed: you can make the final booking "
             "straight after."
             if direct else
-            "Once arranged, click <b>Enter Booking Details</b> to add one or more hotel choices and send them to "
-            f"<b>{html.escape(r['ManagerName'])}</b> for approval.")
+            "Once arranged, click <b>Enter Booking Details</b>.")
     return email_html(
         ref_badge_html(r),
         "<p>Dear Admin Team,</p>",
@@ -727,12 +726,9 @@ def manager_email_html(r):
         ask = (f"The Admin Team has found <b>{n} hotel choices</b>. Please choose one to approve, "
                "or reject the request. A reason is required to reject.")
         approve = _email_button("Choose & Approve", review_url(rid, "approve"), "#7f8e28")
-        note = ""
     else:
         ask = "Please approve or reject the booking below. A reason is required to reject."
         approve = _email_button("Approve", review_url(rid, "approve", quick=True), "#7f8e28")
-        note = ("<p style='color:#7a6f66;font-size:12px'><b>Approve</b> opens a short page where you confirm "
-                "the approval. Once approved, this booking is non-refundable.</p>")
     return email_html(
         ref_badge_html(r),
         f"<p>Dear {html.escape(r['ManagerName'])},</p>",
@@ -743,7 +739,6 @@ def manager_email_html(r):
         "<p style='margin:22px 0 8px'>", approve,
         _email_button("Reject", review_url(rid, "reject"), "#c54b36"),
         "</p>",
-        note,
         LINK_NOTE,
     )
 
