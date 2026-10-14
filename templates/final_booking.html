@@ -65,7 +65,7 @@
     {% set opts = booking_options(r) %}
     {% if is_approved(r) %}
     <div class="hp-card hp-card-pad mb-3">
-      <h2 class="card-title">Approved booking{% if opts|length > 1 %} <span class="pill pill-ok ms-1">Choice {{ selected_option_no(r) }}</span>{% endif %}</h2>
+      <h2 class="card-title">Approved booking{% if opts|length > 1 %} <span class="pill pill-ok ms-1">{{ selected_option_no(r) }}</span>{% endif %}</h2>
       <div class="chosen-box">
         {% for label, value in booking_rows(r, true) %}
           <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>

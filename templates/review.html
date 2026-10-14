@@ -121,7 +121,7 @@
         {% for o in opts %}
           {% if not ok or chosen == loop.index %}
           <div class="opt-card static {{ 'chosen' if chosen == loop.index }}">
-            {% if multi %}<div class="opt-head">Choice {{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok">Approved</span>{% endif %}</div>{% endif %}
+            {% if multi %}<div class="opt-head">{{ loop.index }}{% if chosen == loop.index %} <span class="pill pill-ok">Approved</span>{% endif %}</div>{% endif %}
             {% for label, value in option_rows(o) %}
               <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
             {% endfor %}
@@ -183,7 +183,7 @@
           {% if multi %}
             <input type="radio" class="btn-check opt-input" name="option" id="opt{{ n }}" value="{{ n }}" {{ 'checked' if picked == n }}>
             <label class="opt-card" for="opt{{ n }}">
-              <div class="opt-head"><span class="opt-dot"></span>Choice {{ n }}</div>
+              <div class="opt-head"><span class="opt-dot"></span>{{ n }}</div>
               {% for label, value in option_rows(o) %}
                 <div class="summary-row"><span>{{ label }}</span><span>{{ value }}</span></div>
               {% endfor %}

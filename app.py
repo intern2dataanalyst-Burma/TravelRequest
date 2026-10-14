@@ -540,12 +540,12 @@ def booking_box_html(r, title="Booking arranged by the Admin Team", rows=None, e
 
 
 def choice_label(n, total):
-    """'Choice 2' when the Admin Team offered several; no number at all for a single choice."""
-    return f"Choice {n}" if total > 1 else "Proposed booking"
+    """Just the number ('2') when the Admin Team offered several; no number at all for a single choice."""
+    return str(n) if total > 1 else "Proposed booking"
 
 
 def options_html(r, heading_note="", admin=False):
-    """Every choice the Admin Team offered, one box each (Choice 1, Choice 2, ...). admin=True adds the
+    """Every choice the Admin Team offered, one box each (numbered 1, 2, ... when there are several). admin=True adds the
     Admin-only fields; only emails to the Admin Team pass it."""
     opts = booking_options(r)
     return "".join(booking_box_html(r, choice_label(i, len(opts)) + heading_note, option_rows(o, admin))
@@ -555,7 +555,7 @@ def options_html(r, heading_note="", admin=False):
 def approved_box_html(r, title, admin=False):
     """The choice the manager approved, highlighted."""
     n, total = selected_option_no(r), len(booking_options(r))
-    label = f"{title} (Choice {n})" if n and total > 1 else title
+    label = f"{title} ({n})" if n and total > 1 else title
     return booking_box_html(r, label, booking_rows(r, admin), emphasis=True)
 
 
@@ -749,7 +749,7 @@ def final_booking_email_html(r):
     multi = len(booking_options(r)) > 1
     how = ("no manager approval was required (no reporting manager on record)" if direct
            else f"approved by {html.escape(r['ManagerName'])}")
-    chose = (f" The manager chose <b>Choice {selected_option_no(r)}</b>; please release the other choices."
+    chose = (f" The manager chose <b>{selected_option_no(r)}</b>; please release the others."
              if multi else "")
     return email_html(
         ref_badge_html(r),
@@ -998,7 +998,7 @@ def _parse_cost(raw):
 
 
 def parse_booking_options(form, allow_multiple=True):
-    """Validate the Admin Team form. Choice 1 is required; every extra choice must be complete (Remarks are
+    """Validate the Admin Team form. The first choice is required; every extra choice must be complete (Remarks are
     optional). Returns (rows for re-display, options, errors) where errors maps 'field-index' -> message."""
     fields = ("booking_area", "property_name", "cost", "occupancy", "refund", "remarks")
     lists = {k: form.getlist(k) for k in fields}
